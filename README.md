@@ -48,6 +48,8 @@ GODOT_BIN=/path/to/godot-mono tools/export-windows.sh
 
 需要 `dotnet` 在 PATH 中。脚本执行导入、Release 构建、Windows x64 自包含导出并复制字体授权。中文字体为 Noto Sans CJK，授权见 `Assets/Fonts/LICENSE-NotoSansCJK.txt`。
 
+GitHub Actions 的 **Windows V0.2 release** 流程使用相同版本的 Godot 与 .NET SDK，运行集成检查、导出并上传到 `v0.2.0` 发布草稿，然后发布。首次由 `ci/windows-release-v02` 分支推送触发；合入默认分支后也可在 Actions 页面手动运行。需要已有的发布草稿，已公开版本不会被覆盖。
+
 ## 实际验证与限制
 
 - Godot 导入、Debug/Release 构建和 Windows 导出成功，构建 0 错误、0 警告。

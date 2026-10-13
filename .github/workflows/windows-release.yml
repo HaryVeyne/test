@@ -1,0 +1,70 @@
+name: Windows V0.2 release
+
+on:
+  push:
+    branches: [ci/windows-release-v02]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-v02
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: '4.6.3'
+  RELEASE_TAG: v0.2.0
+  PACKAGE: ProjectUnknown-V0.2-Windows-x64.zip
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.425'
+
+      - name: Check release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+
+      - name: Install Godot .NET and export templates
+        run: |
+          engine="Godot_v${GODOT_VERSION}-stable_mono_linux_x86_64"
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          curl --fail --location --retry 3 "$base/$engine.zip" -o "$RUNNER_TEMP/godot.zip"
+          curl --fail --location --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_mono_export_templates.tpz" -o "$RUNNER_TEMP/templates.tpz"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/templates.tpz" -d "$RUNNER_TEMP/export"
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          mv "$RUNNER_TEMP/export/templates" "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable.mono"
+          chmod +x "$RUNNER_TEMP/godot/$engine/$engine"
+          echo "GODOT_BIN=$RUNNER_TEMP/godot/$engine/$engine" >> "$GITHUB_ENV"
+
+      - name: Verify and export Windows
+        run: |
+          tools/verify.sh
+          tools/export-windows.sh
+          cd Builds
+          zip -qr "$PACKAGE" Windows
+
+      - name: Upload and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/release.md"
+          python3 - "Builds/$PACKAGE" "$RUNNER_TEMP/release.md" <<'PY'
+          import hashlib, pathlib, re, sys
+          package, notes = map(pathlib.Path, sys.argv[1:])
+          with package.open('rb') as stream:
+              checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
+          body = re.sub(r'Windows ZIP SHA-256：`[0-9a-f]{64}`', f'Windows ZIP SHA-256：`{checksum}`', notes.read_text())
+          notes.write_text(body)
+          PY
+          gh release upload "$RELEASE_TAG" "Builds/$PACKAGE"
+          gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/release.md" --draft=false
