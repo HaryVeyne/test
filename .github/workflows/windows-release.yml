@@ -36,6 +36,7 @@ jobs:
       - name: Install Godot .NET and export templates
         run: |
           engine="Godot_v${GODOT_VERSION}-stable_mono_linux_x86_64"
+          binary="Godot_v${GODOT_VERSION}-stable_mono_linux.x86_64"
           base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
           curl --fail --location --retry 3 "$base/$engine.zip" -o "$RUNNER_TEMP/godot.zip"
           curl --fail --location --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_mono_export_templates.tpz" -o "$RUNNER_TEMP/templates.tpz"
@@ -43,8 +44,8 @@ jobs:
           unzip -q "$RUNNER_TEMP/templates.tpz" -d "$RUNNER_TEMP/export"
           mkdir -p "$HOME/.local/share/godot/export_templates"
           mv "$RUNNER_TEMP/export/templates" "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable.mono"
-          chmod +x "$RUNNER_TEMP/godot/$engine/$engine"
-          echo "GODOT_BIN=$RUNNER_TEMP/godot/$engine/$engine" >> "$GITHUB_ENV"
+          chmod +x "$RUNNER_TEMP/godot/$engine/$binary"
+          echo "GODOT_BIN=$RUNNER_TEMP/godot/$engine/$binary" >> "$GITHUB_ENV"
 
       - name: Verify and export Windows
         run: |
