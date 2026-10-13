@@ -7,7 +7,10 @@ public partial class Soundscape : Node
 {
     private AudioStreamPlayer _ambience = null!;
     private AudioStreamPlayer _chime = null!;
+    private AudioStreamPlayer _impact = null!;
+    private AudioStreamWav _strike = null!, _hurt = null!;
     private bool _silent;
+    private bool _stopped;
 
     public override void _Ready()
     {
@@ -15,8 +18,12 @@ public partial class Soundscape : Node
         if (_silent) return;
         _ambience = new AudioStreamPlayer { Stream = MakeAmbient(), VolumeDb = -24 };
         _chime = new AudioStreamPlayer();
+        _impact = new AudioStreamPlayer { VolumeDb = -12 };
+        _strike = MakeImpact(680, 0.08f);
+        _hurt = MakeImpact(125, 0.13f);
         AddChild(_ambience);
         AddChild(_chime);
+        AddChild(_impact);
         _ambience.Play();
     }
 
@@ -48,9 +55,36 @@ public partial class Soundscape : Node
 
     public void Stop()
     {
-        if (_silent) return;
+        if (_silent || _stopped) return;
+        _stopped = true;
         Release(_ambience);
         Release(_chime);
+        _impact.Stop();
+        _impact.Stream = null;
+        _strike.Dispose();
+        _hurt.Dispose();
+    }
+
+    public void CombatHit(bool success)
+    {
+        if (_silent) return;
+        _impact.Stop();
+        _impact.Stream = success ? _strike : _hurt;
+        _impact.Play();
+    }
+
+    private static AudioStreamWav MakeImpact(float frequency, float duration)
+    {
+        const int rate = 22050;
+        var data = new byte[(int)(rate * duration) * 2];
+        for (int i = 0; i < data.Length / 2; i++)
+        {
+            float t = (float)i / rate;
+            short sample = (short)(Mathf.Sin(Mathf.Tau * frequency * t * (1 - t)) * Mathf.Exp(-t * 30) * 12000);
+            data[i * 2] = (byte)sample;
+            data[i * 2 + 1] = (byte)(sample >> 8);
+        }
+        return new AudioStreamWav { Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Data = data };
     }
 
     public override void _ExitTree() => Stop();

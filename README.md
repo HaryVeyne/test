@@ -1,71 +1,57 @@
-# Project Unknown · 未知之境 V0.1
+# Project Unknown · 未知之境 V0.2
 
-Windows PC 单人俯视角探索游戏。在陌生大陆寻找遗迹、观察环境和机关反馈，将不同地区的线索联系起来。
+Godot/C# 原生 Windows 单人动作探索 RPG。地表 220×220 格，包含森林、草原、荒漠、湿地、雪地；保留原遗迹机关，新增林地墓室和熔炉两个地下城。
 
-## 开发环境
+## 启动
 
-- Godot **4.6.3 .NET** 稳定版（标准版不能运行 C# 脚本）
-- .NET **8 SDK**
-- Windows 10/11，或支持 Godot .NET 的 Linux 开发环境
+下载 Windows 包后完整解压，运行 `Windows/ProjectUnknown.exe`，保留同目录的运行库和数据文件。玩家不需要安装 .NET SDK。
 
-核心逻辑使用 C#，不需要第三方游戏库。中文字体为 SIL Open Font License 的 Noto Sans CJK。
-
-## 打开与启动
-
-在 Godot 项目管理器中导入根目录 `project.godot`，第一次打开等待资源导入，点击右上角“构建”后按 **F6/F5** 运行当前场景/项目。
-
-也可以在项目目录运行：
+开发环境保持 **Godot 4.6.3 .NET + .NET 8 SDK**。在 Godot 中导入根目录 `project.godot`，等待资源导入，构建后按 **F5**。也可执行：
 
 ```sh
 dotnet build ProjectUnknown.csproj
 godot --path .
 ```
 
-其中 `godot` 必须指向 .NET 版可执行文件。Windows 下载版可以直接使用完整可执行路径。
+`godot` 必须指向 .NET 版，标准版不支持本项目的 C# 脚本。
 
 ## 操作
 
 | 操作 | 按键 |
 | --- | --- |
-| 移动 | WASD / 方向键 |
-| 奔跑 | Shift |
-| 互动 | E |
-| 地图 | M |
-| 探索日志 | J |
-| 暂停 / 返回 | Esc |
-| 全屏切换 | F11 |
+| 移动 / 奔跑 | WASD 或方向键 / Shift |
+| 攻击方向 / 普通攻击 | 鼠标 / 鼠标左键，可按住连续攻击 |
+| 闪避 | Space |
+| 回旋斩 / 三连射 / 寒霜爆发 | 1 / 2 / 3，需先学习对应技能 |
+| 互动、开箱、拾取、休息 | E |
+| 背包 / 角色与技能 | I / C |
+| 地图 / 探索日志 | M / J |
+| 暂停 / 全屏 | Esc / F11 |
 
-主菜单可以新游戏或继续存档。暂停菜单提供设置、存档和探索记录导出。存档与导出记录保存在 Godot `user://` 目录；本项目的 Windows 路径是 `%APPDATA%/ProjectUnknown/`，Linux 路径是 `~/.local/share/ProjectUnknown/`。
+初始背包含剑、弓、法杖和药水。背包可装备、卸下、使用或丢弃物品；丢弃物品可在原地拾回。等级提升获得技能点，角色页可学习主动技能及三种被动强化。
+
+完成中央遗迹并击败两个地下城 Boss 即完成主线，结算后可继续探索。营地恢复生命、设置复活点并解锁快速旅行；附近有敌人时无法休息或旅行。死亡保留装备、经验和已完成进度。击败的敌人在此存档中不会刷新。
+
+## 存档
+
+存档自动保存，也可在暂停菜单保存和导出 JSON 探索记录。V0.1 存档会迁移地图探索索引，保留原机关与遗迹进度，并补充初始角色、装备和技能数据。新游戏会先备份旧档；损坏存档不会被自动覆盖。
+
+Windows：`%APPDATA%/ProjectUnknown/`；Linux：`~/.local/share/ProjectUnknown/`。装备、成长、地下城、检查点和地面掉落均保存；战斗冷却和存活敌人的当前生命在重新载入区域时重置。
 
 ## Windows 导出
 
-1. 在 Godot 的“编辑器 → 管理导出模板”中安装 **4.6.3 .NET** 导出模板。
-2. 打开“项目 → 导出”，选择已有的 **Windows Desktop** 预设。
-3. 点击“导出项目”，关闭调试导出，保存到 `Builds/Windows/ProjectUnknown.exe`。
-4. 将 `Assets/Fonts/LICENSE-NotoSansCJK.txt` 一并复制到输出目录；分发整个 `Builds/Windows` 文件夹，包括 .NET 运行库与程序集目录。脚本导出会自动复制字体授权。
-
-该导出包含 .NET 运行库，玩家无需安装 SDK。命令行导出：
+安装匹配的 **4.6.3 .NET** 导出模板，在“项目 → 导出”选择已有的 **Windows Desktop** 预设，导出到 `Builds/Windows/ProjectUnknown.exe`，分发整个目录并附带字体授权。Linux/macOS 可运行：
 
 ```sh
-dotnet build ProjectUnknown.csproj -c Release
-godot --headless --path . --editor --import
-godot --headless --path . --export-release "Windows Desktop" Builds/Windows/ProjectUnknown.exe
+GODOT_BIN=/path/to/godot-mono tools/export-windows.sh
 ```
 
-Linux/macOS 可使用 `tools/export-windows.sh`；通过 `GODOT_BIN` 指定 .NET 版 Godot 路径。
+需要 `dotnet` 在 PATH 中。脚本执行导入、Release 构建、Windows x64 自包含导出并复制字体授权。中文字体为 Noto Sans CJK，授权见 `Assets/Fonts/LICENSE-NotoSansCJK.txt`。
 
-## 验证
+## 实际验证与限制
 
-已实际完成 Godot 资源导入、C# 构建（0 错误 / 0 警告）和 Windows x64 自包含版本导出。
-
-Godot 场景集成检查覆盖固定种子、关键地点可达、移动/奔跑/水域碰撞、踩踏开桥、三类机关、存档恢复、结局和 JSON 导出，共 33 项。通关检查会定位到机关附近；世界路径另外以可达性检查验证，不等同于人工走完整条路线。
-
-Linux 可重复运行 `GODOT_BIN=/path/to/godot-mono tools/verify.sh`，需要 `dotnet` 在 PATH 中。测试用临时 XDG 目录隔离存档；无头模式不创建音频流。无头和图形模式均通过 33 项检查，退出无对象泄漏警告。已在虚拟图形环境检查 1280×720、1600×900、1920×1080 布局以及菜单、地图、日志、设置与结局。
-
-## 已知限制
-
-- V0.1 使用固定范围、固定种子的世界；没有无限地图、多人或联网服务。
-- 画面由项目内原创程序绘制，未使用商业素材。
-- Windows 导出未签名，首次启动可能需要通过系统的应用信誉提示。
-- 云端缺少音频设备，图形运行使用 Dummy 音频驱动；已检查音频资源播放/释放流程，但声音听感未验证。Xvfb 没有窗口管理器，F11 调用正常，真实全屏视觉仍需检验。
-- Windows 构建已导出并检查完整性，尚未在 Windows 10/11 原机验证显示、声音、性能与输入兼容性。
+- Godot 导入、Debug/Release 构建和 Windows 导出成功，构建 0 错误、0 警告。
+- 无头和图形模式各通过 **135 项集成检查**，覆盖旧机关、移动碰撞、战斗、三种武器、装备掉落、升级技能、死亡复活、地下城往返、两场 Boss 战、完整结局、存档恢复和 V0.1 迁移。Boss 由正常攻击与技能击败。测试定位缩短旅行，路线另做可达性检查，不等同于真人走完整条路线。
+- 已实际检查 1280×720、1600×900、1920×1080 的菜单、背包、角色、地图、日志、设置及结算布局。Linux 可用 `GODOT_BIN=/path/to/godot-mono tools/verify.sh` 在隔离的临时存档目录重复检查。
+- 云端没有音频设备，图形验证使用 Dummy 驱动；声音听感未验证。Xvfb 没有窗口管理器，F11 调用正常，真实全屏效果仍需 Windows PC 检验。
+- Windows 包已导出并核验完整性，尚未在 Windows 10/11 原机验证显示、声音、输入和性能。构建未签名。

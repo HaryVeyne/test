@@ -38,15 +38,15 @@ public partial class WorldRenderer : Node2D
         _collisions?.QueueFree();
         _collisions = new StaticBody2D { Name = "TerrainCollision", CollisionLayer = 1, CollisionMask = 0 };
         AddChild(_collisions);
-        var covered = new bool[WorldData.Size, WorldData.Size];
-        for (int y = 0; y < WorldData.Size; y++)
-        for (int x = 0; x < WorldData.Size; x++)
+        var covered = new bool[_world.Width, _world.Height];
+        for (int y = 0; y < _world.Height; y++)
+        for (int x = 0; x < _world.Width; x++)
         {
             if (!_world.Blocked[x, y] || covered[x, y]) continue;
             int width = 1;
-            while (x + width < WorldData.Size && _world.Blocked[x + width, y] && !covered[x + width, y]) width++;
+            while (x + width < _world.Width && _world.Blocked[x + width, y] && !covered[x + width, y]) width++;
             int height = 1;
-            while (y + height < WorldData.Size)
+            while (y + height < _world.Height)
             {
                 bool complete = true;
                 for (int i = 0; i < width; i++)
@@ -72,14 +72,16 @@ public partial class WorldRenderer : Node2D
         Vector2 half = viewport / zoom * 0.5f + new Vector2(100, 100);
         _view = new Rect2(Focus - half, half * 2);
         int minX = Math.Max(0, (int)(_view.Position.X / 32));
-        int maxX = Math.Min(119, (int)(_view.End.X / 32));
+        int maxX = Math.Min(_world.Width - 1, (int)(_view.End.X / 32));
         int minY = Math.Max(0, (int)(_view.Position.Y / 32));
-        int maxY = Math.Min(119, (int)(_view.End.Y / 32));
+        int maxY = Math.Min(_world.Height - 1, (int)(_view.End.Y / 32));
         DrawRect(_view.Grow(40), new Color("#1e343a"));
         for (int y = minY; y <= maxY; y++)
         for (int x = minX; x <= maxX; x++) DrawTile(x, y);
         for (int y = minY; y <= maxY; y++)
         for (int x = minX; x <= maxX; x++) DrawDecoration(x, y);
+
+        if (_world.Area != "world") return;
 
         if (IsInView(new(60, 59), 330)) DrawCentralRuins();
         if (IsInView(new(27, 32), 240)) DrawForestRunes();
@@ -90,6 +92,9 @@ public partial class WorldRenderer : Node2D
         if (IsInView(new(89, 91), 130)) DrawArchive();
         if (IsInView(new(12, 54), 130)) DrawHollow();
         if (IsInView(new(48, 108), 130)) DrawBell();
+        DrawExtendedLandmarks();
+        foreach (WorldObject obj in _world.Objects)
+            if (IsInView(obj.Tile, 120)) DrawWorldObject(obj);
         DrawFloatingMotes();
     }
 
@@ -116,10 +121,33 @@ public partial class WorldRenderer : Node2D
             Terrain.Forest => Forest,
             Terrain.Dunes => Sand,
             Terrain.Water => Water,
-            Terrain.Ruins => Stone,
+            Terrain.Ruins => _world.Area == "forge" ? new Color("#5e6668") : Stone,
+            Terrain.Wetland => new Color("#526f69"),
+            Terrain.Snow => new Color("#a4b9bf"),
             _ => new Color("#8b8563")
         };
+        if (_world.Area != "world")
+        {
+            basis = _world.Blocked[x, y]
+                ? new Color(_world.Area == "forge" ? "#303d44" : "#293e3d")
+                : terrain == Terrain.Path
+                    ? new Color(_world.Area == "forge" ? "#566069" : "#607267") : basis;
+        }
+        else if (terrain == Terrain.Path)
+        {
+            Terrain nearby = _world.TileAt(x - 2, y);
+            if (nearby == Terrain.Snow || _world.TileAt(x + 2, y) == Terrain.Snow) basis = new Color("#7f979e");
+            else if (nearby == Terrain.Wetland) basis = new Color("#84907a");
+        }
         DrawRect(new Rect2(p, new(32, 32)), basis.Lightened(shade));
+        if (_world.Area != "world" && _world.Blocked[x, y])
+        {
+            Rect(p, 1, 1, 30, 2, new Color("#596c68"));
+            Rect(p, 1, 29, 30, 3, new Color("#1b3032"));
+            Rect(p, 30, 1, 2, 28, new Color("#1b3032"));
+            if (h % 4 == 0) Rect(p, 3, 8, 9, 3, Moss);
+            return;
+        }
         if (terrain == Terrain.Water)
         {
             Color ripple = new Color("#588687", 0.30f);
@@ -160,6 +188,20 @@ public partial class WorldRenderer : Node2D
             if (h % 5 == 0) DrawLine(p + new Vector2(9, 17), p + new Vector2(21, 17), new Color("#716e51", 0.32f));
             return;
         }
+        if (terrain == Terrain.Snow)
+        {
+            Rect(p, 0, 27, 32, 3, new Color("#859da6", 0.25f));
+            Rect(p, h % 23 + 2, (h >> 7) % 19 + 4, 8, 2, new Color("#d9e4df", 0.56f));
+            if (h % 6 == 0) Rect(p, (h >> 9) % 23 + 2, 22, 3, 1, new Color("#79999d"));
+            return;
+        }
+        if (terrain == Terrain.Wetland)
+        {
+            Rect(p, h % 19 + 3, (h >> 7) % 20 + 5, 11, 3, new Color("#6c8a78", 0.45f));
+            Rect(p, (h >> 9) % 21 + 3, (h >> 14) % 25 + 1, 7, 1, new Color("#a7b898", 0.4f));
+            if (h % 7 == 0) Rect(p, 10, 15, 4, 4, new Color("#918cab"));
+            return;
+        }
         Color blade = terrain == Terrain.Forest ? new Color("#537259", 0.64f) : new Color("#829070", 0.64f);
         int gx = (int)(h % 23) + 4, gy = (int)((h >> 7) % 20) + 6;
         Rect(p, gx, gy, 1, 5, blade);
@@ -177,6 +219,29 @@ public partial class WorldRenderer : Node2D
         Terrain terrain = _world.Tiles[x, y];
         Vector2 p = WorldData.Center(new(x, y));
         uint h = Variation(x, y);
+        if (_world.Area != "world") return;
+        if (terrain == Terrain.Path)
+        {
+            bool northSouth = _world.TileAt(x - 2, y) == Terrain.Water && _world.TileAt(x + 2, y) == Terrain.Water;
+            bool eastWest = _world.TileAt(x, y - 2) == Terrain.Water && _world.TileAt(x, y + 2) == Terrain.Water;
+            if (northSouth || eastWest)
+            {
+                Rect(p, -16, -16, 32, 32, new Color("#7e8066"));
+                for (int plank = -12; plank <= 12; plank += 8)
+                    if (northSouth) Rect(p, -15, plank, 30, 2, new Color("#b0aa83"));
+                    else Rect(p, plank, -15, 2, 30, new Color("#b0aa83"));
+                if (northSouth)
+                {
+                    Rect(p, -16, -16, 3, 32, new Color("#536b60"));
+                    Rect(p, 13, -16, 3, 32, new Color("#536b60"));
+                }
+                else
+                {
+                    Rect(p, -16, -16, 32, 3, new Color("#536b60"));
+                    Rect(p, -16, 13, 32, 3, new Color("#536b60"));
+                }
+            }
+        }
         if (terrain == Terrain.Forest && _world.Blocked[x, y])
         {
             DrawTree(p, (int)(h % 3));
@@ -191,6 +256,28 @@ public partial class WorldRenderer : Node2D
         {
             DrawRock(p, true);
             return;
+        }
+        if (terrain == Terrain.Snow && _world.Blocked[x, y])
+        {
+            DrawRock(p);
+            Polygon(p, new Color("#d1ded8"), new(-11, -9), new(1, -14), new(8, -7), new(-1, -3), new(-13, 2));
+            return;
+        }
+        if (terrain == Terrain.Wetland)
+        {
+            if (_world.Blocked[x, y])
+            {
+                Rect(p, -11, 5, 23, 8, new Color("#354e49"));
+                Polygon(p, new Color("#6c7660"), new(-12, 7), new(-7, -12), new(-4, -37), new(1, -32), new(4, -10), new(13, 8));
+                Rect(p, -11, -23, 8, 3, new Color("#6c7660"));
+                Rect(p, 2, -19, 12, 3, new Color("#6c7660"));
+            }
+            else if (h % 9 == 0)
+                for (int i = -8; i <= 8; i += 4)
+                {
+                    Rect(p, i, -14 - (i & 3), 1, 29, new Color("#92a278"));
+                    Rect(p, i - 1, -18 - (i & 3), 3, 7, new Color("#b6ac83"));
+                }
         }
         if (terrain is Terrain.Meadow or Terrain.Forest && h % 27 == 0)
         {
@@ -547,6 +634,143 @@ public partial class WorldRenderer : Node2D
         DrawGlyph(p + new Vector2(0, 20), 1, new Color("#bac1a3"), 11);
     }
 
+    private void DrawExtendedLandmarks()
+    {
+        if (IsInView(new(154, 33), 200))
+        {
+            Vector2 p = WorldData.Center(new(154, 33));
+            Rect(p, -92, -75, 184, 18, new Color("#847754"));
+            Rect(p, -94, -80, 188, 7, new Color("#bfb18a"));
+            for (int i = -1; i <= 1; i++) DrawPillar(p + new Vector2(i * 72, -8), 46, false);
+            Rect(p, -43, 43, 37, 23, new Color("#8c6e4b"));
+            Rect(p, 20, 45, 43, 19, new Color("#9e865c"));
+            Rect(p, -82, 20, 16, 40, new Color("#c8b187"));
+        }
+        if (IsInView(new(177, 95), 230))
+        {
+            Vector2 p = WorldData.Center(new(177, 95));
+            for (int i = -1; i <= 1; i++)
+            {
+                Vector2 hut = p + new Vector2(i * 96, -50 - Math.Abs(i) * 32);
+                Rect(hut, -29, -4, 58, 36, new Color("#4c6259"));
+                Polygon(hut, new Color("#778571"), new(-38, -1), new(0, -33), new(38, -1));
+                Rect(hut, -8, 8, 16, 24, new Color("#2b4947"));
+                Rect(hut, -25, 30, 6, 23, new Color("#748270"));
+                Rect(hut, 19, 30, 6, 23, new Color("#748270"));
+            }
+            DrawLine(p + new Vector2(-132, 59), p + new Vector2(132, 59), new Color("#8c9780"), 8);
+            for (int i = -4; i <= 4; i++) Rect(p, i * 30, 51, 3, 17, new Color("#bac1a0"));
+        }
+        if (IsInView(new(202, 132), 230))
+        {
+            Vector2 p = WorldData.Center(new(202, 132));
+            for (int i = -2; i <= 2; i++)
+            {
+                if (i == 0) continue;
+                DrawPillar(p + new Vector2(i * 58, -12), 64, false);
+                Rect(p, i * 58 - 32, -82, 64, 12, new Color("#acb6a0"));
+                Rect(p, i * 58 - 30, -70, 60, 8, new Color("#657e70"));
+            }
+            DrawRock(p + new Vector2(-10, 50));
+            DrawRock(p + new Vector2(15, 62));
+        }
+        if (IsInView(new(97, 170), 190))
+        {
+            Vector2 p = WorldData.Center(new(97, 170));
+            DrawPillar(p + new Vector2(-38, -25), 85, false);
+            DrawPillar(p + new Vector2(38, -25), 85, false);
+            Rect(p, -62, -117, 124, 13, new Color("#a8ac8b"));
+            Rect(p, -45, -87, 90, 28, new Color("#465d50"));
+            Rect(p, -47, -92, 94, 7, new Color("#839178"));
+            Rect(p, -3, -153, 6, 46, new Color("#82795c"));
+            Polygon(p, new Color("#bba879"), new(3, -150), new(38, -145), new(32, -126), new(3, -130));
+        }
+        if (IsInView(new(203, 199), 230))
+        {
+            Vector2 p = WorldData.Center(new(203, 199));
+            Ring(p, 130, new Color("#d5e0d9", 0.5f), 4);
+            Ring(p, 104, new Color("#607f88", 0.7f), 3);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector2 v = Vector2.FromAngle(i * Mathf.Tau / 8);
+                DrawLine(p + v * 90, p + v * 125, new Color("#cbd5c9"), 3);
+            }
+            DrawPillar(p + new Vector2(-68, -22), 62, false);
+            DrawPillar(p + new Vector2(68, -22), 62, false);
+            Rect(p, -31, -4, 62, 27, new Color("#62808a"));
+            Rect(p, -24, -26, 48, 28, new Color("#b7c6bd"));
+            DrawCircle(p + new Vector2(0, -11), 17, new Color("#506e7b"));
+            DrawLine(p + new Vector2(-13, -1), p + new Vector2(13, -20), new Color("#b9dcdf"), 4);
+        }
+        if (IsInView(new(44, 165), 180))
+        {
+            Vector2 p = WorldData.Center(new(44, 165));
+            for (int i = 0; i < 6; i++) DrawTree(p + Vector2.FromAngle(i * Mathf.Tau / 6) * 110, 1);
+            DrawPillar(p, 32, false);
+            Ring(p, 49, new Color("#99b18e", 0.45f), 2);
+        }
+    }
+
+    private void DrawWorldObject(WorldObject obj)
+    {
+        Vector2 p = WorldData.Center(obj.Tile);
+        switch (obj.Kind)
+        {
+            case "checkpoint":
+                if (obj.Id == "camp") return;
+                bool visited = _state.Checkpoints.Contains(obj.Id);
+                Rect(p, -54, 13, 108, 12, new Color("#253f3b", 0.4f));
+                Color canvas = obj.Id == "snow_camp" ? new Color("#b5c3bf") : new Color("#aa9f78");
+                Polygon(p + new Vector2(-48, -8), canvas, new(-31, 19), new(0, -29), new(32, 19));
+                Polygon(p + new Vector2(-48, -8), new Color("#3a5048"), new(-14, 18), new(0, -16), new(12, 18));
+                Ring(p + new Vector2(23, 10), 17, new Color("#9da78b"), 4);
+                Rect(p, 9, 7, 27, 6, new Color("#655644"));
+                Polygon(p + new Vector2(23, 10), visited ? Gold : new Color("#849477"), new(-8, 0), new(-4, -11), new(1, -8), new(4, -21), new(10, 0));
+                if (visited) DrawLight(p + new Vector2(23, -1), Gold, 36);
+                Rect(p, 50, -25, 3, 51, new Color("#8d8864"));
+                Polygon(p + new Vector2(53, -24), visited ? Cyan : new Color("#8b9c82"), new(0, 0), new(26, 5), new(21, 19), new(0, 15));
+                break;
+            case "chest":
+                bool opened = _state.OpenedChests.Contains(obj.Id);
+                Rect(p, -18, 7, 38, 9, new Color("#223b35", 0.45f));
+                Rect(p, -15, -5, 30, 21, new Color("#795e43"));
+                Rect(p, -11, -3, 22, 13, new Color("#a08759"));
+                Rect(p, -16, opened ? -18 : -9, 32, 9, new Color("#bcaa74"));
+                Rect(p, -11, opened ? -15 : -7, 22, 5, new Color("#76664a"));
+                Rect(p, -11, -3, 3, 18, new Color("#d3bd7d"));
+                Rect(p, 8, -3, 3, 18, new Color("#d3bd7d"));
+                Rect(p, -2, -2, 5, 7, opened ? new Color("#403f31") : Gold);
+                if (!opened) Rect(p, 13, -16 + MathF.Sin(Clock * 2) * 2, 3, 3, Gold);
+                break;
+            case "portal":
+                bool forge = obj.Value == "forge";
+                Color glow = forge ? new Color("#efb574") : Cyan;
+                DrawPillar(p + new Vector2(-45, 8), 68, true);
+                DrawPillar(p + new Vector2(45, 8), 68, true);
+                Rect(p, -63, -68, 126, 15, forge ? new Color("#847d68") : new Color("#8ca38a"));
+                Rect(p, -29, -43, 58, 60, new Color("#182e33"));
+                Rect(p, -27, 7, 54, 10, new Color("#708374"));
+                Rect(p, -37, 18, 74, 8, new Color("#92a48d"));
+                DrawGlyph(p + new Vector2(0, -60), forge ? 1 : 0, glow, 9);
+                for (int i = 0; i < 4; i++)
+                    Rect(p, -23 + i * 15, -38 + MathF.Sin(Clock + i) * 5, 2, 35, new Color(glow, 0.16f));
+                DrawLight(p + new Vector2(0, -17), glow, 56);
+                if (!forge)
+                {
+                    DrawLine(p + new Vector2(-70, 32), p + new Vector2(-36, -57), new Color("#456947"), 6);
+                    DrawLine(p + new Vector2(66, 24), p + new Vector2(45, -61), new Color("#456947"), 5);
+                }
+                else
+                {
+                    Rect(p, -83, -37, 15, 62, new Color("#5b6363"));
+                    Rect(p, 65, -41, 18, 68, new Color("#5b6363"));
+                    Rect(p, -81, -33, 11, 8, new Color("#efaf74"));
+                    Rect(p, 68, -37, 12, 8, new Color("#efaf74"));
+                }
+                break;
+        }
+    }
+
     private void DrawLight(Vector2 p, Color color, float radius)
     {
         DrawCircle(p, radius, new Color(color, 0.035f));
@@ -563,7 +787,15 @@ public partial class WorldRenderer : Node2D
             uint h = Variation(x * 5, y * 5);
             Vector2 p = new(x * 160 + h % 140, y * 160 + (h >> 8) % 140);
             int tx = (int)(p.X / 32), ty = (int)(p.Y / 32);
-            if (_world.TileAt(tx, ty) is not (Terrain.Forest or Terrain.Meadow)) continue;
+            Terrain terrain = _world.TileAt(tx, ty);
+            if (terrain == Terrain.Snow)
+            {
+                p.Y += (Clock * 14 + h % 60) % 80;
+                p.X += MathF.Sin(Clock * 0.6f + h % 37) * 11;
+                Rect(p, 0, 0, 2, 2, new Color("#edf1e6", 0.65f));
+                continue;
+            }
+            if (terrain is not (Terrain.Forest or Terrain.Meadow or Terrain.Wetland)) continue;
             p += new Vector2(MathF.Sin(Clock * 0.22f + h % 60) * 15, MathF.Cos(Clock * 0.18f + h % 31) * 7);
             float glow = (MathF.Sin(Clock * 0.6f + h % 17) + 1) * 0.3f;
             Rect(p, 0, 0, 2, 2, new Color(Gold, glow));
