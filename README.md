@@ -4,6 +4,8 @@ Godot/C# 原生 Windows 单人动作探索 RPG。地表 220×220 格，包含森
 
 ## 启动
 
+Windows 下载：[V0.2 发布页](https://github.com/HaryVeyne/test/releases/tag/v0.2.0)，选择 `ProjectUnknown-V0.2-Windows-x64.zip`。
+
 下载 Windows 包后完整解压，运行 `Windows/ProjectUnknown.exe`，保留同目录的运行库和数据文件。玩家不需要安装 .NET SDK。
 
 开发环境保持 **Godot 4.6.3 .NET + .NET 8 SDK**。在 Godot 中导入根目录 `project.godot`，等待资源导入，构建后按 **F5**。也可执行：
@@ -53,6 +55,7 @@ GitHub Actions 的 **Windows V0.2 release** 流程使用相同版本的 Godot �
 ## 实际验证与限制
 
 - Godot 导入、Debug/Release 构建和 Windows 导出成功，构建 0 错误、0 警告。
+- GitHub Actions 已实际通过 135 项无头集成检查、Windows 导出和自动发布；发布附件的 SHA-256、ZIP 完整性、x64 可执行文件及自包含运行库已核验。
 - 无头和图形模式各通过 **135 项集成检查**，覆盖旧机关、移动碰撞、战斗、三种武器、装备掉落、升级技能、死亡复活、地下城往返、两场 Boss 战、完整结局、存档恢复和 V0.1 迁移。Boss 由正常攻击与技能击败。测试定位缩短旅行，路线另做可达性检查，不等同于真人走完整条路线。
 - 已实际检查 1280×720、1600×900、1920×1080 的菜单、背包、角色、地图、日志、设置及结算布局。Linux 可用 `GODOT_BIN=/path/to/godot-mono tools/verify.sh` 在隔离的临时存档目录重复检查。
 - 云端没有音频设备，图形验证使用 Dummy 驱动；声音听感未验证。Xvfb 没有窗口管理器，F11 调用正常，真实全屏效果仍需 Windows PC 检验。
