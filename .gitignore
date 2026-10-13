@@ -1,0 +1,15 @@
+.godot/
+bin/
+obj/
+builds/
+Builds/
+*.user
+*.tmp
+*.log
+.DS_Store
+.vscode/
+.idea/
+library-files/
+scratch/
+shared/
+TEAM_CONTRACT.md
