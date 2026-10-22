@@ -87,6 +87,8 @@ public partial class Player : CharacterBody2D
         _dodgeTime = 0.20f;
         _invulnerability = 0.32f;
         DodgeCooldown = 1.05f;
+        _game.Combat.CancelAttack();
+        _game.Combat.OnDodge();
         _game.Combat.SpawnEffect(GlobalPosition, 20, new Color("9ce2dc"), 0.25f);
         return true;
     }
@@ -160,6 +162,11 @@ public partial class Player : CharacterBody2D
             DrawArc(bow, 12, direction.Angle() - Mathf.Pi / 2, direction.Angle() + Mathf.Pi / 2, 12, new Color("b99869"), 3);
             DrawLine(bow + direction.Orthogonal() * 12, bow - direction.Orthogonal() * 12, new Color("e2d6b6"), 1);
             if (AttackMotion > 0) DrawLine(hand, hand + direction * 26, new Color("f2e4ac"), 2);
+            if (_game.Combat.ChargeProgress > 0)
+            {
+                DrawArc(hand, 24, -Mathf.Pi / 2, -Mathf.Pi / 2 + Mathf.Tau * _game.Combat.ChargeProgress, 24, new Color("edcb78"), 3);
+                DrawLine(hand + direction * 30, hand + direction * 64, new Color("edcb78"), 1);
+            }
         }
         else
         {

@@ -14,7 +14,7 @@ public static class SaveStore
     private static readonly HashSet<string> Mechanisms = new()
     {
         "bridge", "forest", "lake", "dunes", "center", "crypt_supply_a", "crypt_supply_b", "crypt_gate",
-        "forge_coolant", "forge_gate", "crypt_complete", "forge_complete"
+        "forge_coolant", "forge_gate", "crypt_complete", "forge_complete", "marsh_west", "marsh_east", "marsh_drained", "marsh_complete"
     };
     private static readonly HashSet<string> Areas = new() { "world", "crypt", "forge" };
     private static readonly HashSet<string> CheckpointIds = new() { "camp", "forest_camp", "dunes_camp", "wetland_camp", "snow_camp" };
@@ -124,14 +124,24 @@ public static class SaveStore
             error = Validate(state);
             if (error.Length > 0) return null;
             bool legacy = state.Version == 1;
+            bool previousRpg = state.Version == 2;
             if (legacy) MigrateLegacy(state);
+            if (previousRpg)
+            {
+                state.Version = 3;
+                state.ReserveWeaponId = state.Inventory.FirstOrDefault(item => Items.Get(item.Id).Kind == ItemKind.Weapon && item.Id != state.WeaponId)?.Id ?? "";
+                state.Events.Add(new(state.PlayedSeconds, "save_migrated", "V0.2 → V0.3"));
+            }
             var world = new WorldData(state.Seed, state.Area);
+            Wetland.Apply(world, state);
             if (state.Activated.Contains("bridge") && state.Area == "world") world.OpenBridge();
             string gate = state.Area + "_gate";
             if (state.Area != "world" && state.Activated.Contains(gate)) world.OpenGate(gate);
             if (world.IsBlocked((int)(state.PlayerX / WorldData.TileSize), (int)((state.PlayerY + 3) / WorldData.TileSize), state.Activated.Contains("bridge")))
             {
-                if (!legacy || !RelocateLegacyPlayer(state, world))
+                bool changedWetland = previousRpg && state.Area == "world"
+                    && Wetland.Basin.HasPoint(new((int)(state.PlayerX / 32), (int)(state.PlayerY / 32)));
+                if (!(legacy || changedWetland) || !RelocateLegacyPlayer(state, world))
                 {
                     error = "存档中的玩家位置位于不可通行地形。原文件已保留。";
                     return null;
@@ -154,9 +164,10 @@ public static class SaveStore
         var report = new
         {
             Project = "Project Unknown",
-            Version = "0.2",
+            Version = "0.3",
             ExportedUtc = DateTime.UtcNow,
             state.Seed,
+            Difficulty = CombatRules.Profile(state.Difficulty).Name,
             Result = state.RpgCompleted ? "completed" : state.Completed ? "relic_completed" : "in_progress",
             Stats = new
             {
@@ -182,7 +193,7 @@ public static class SaveStore
             state.Activated,
             state.BossesDefeated,
             state.Checkpoints,
-            Equipment = new { state.WeaponId, state.ArmorId, state.AccessoryId },
+            Equipment = new { state.WeaponId, state.ReserveWeaponId, state.ArmorId, state.AccessoryId },
             state.Inventory,
             state.LearnedSkills,
             state.Passives,
@@ -196,7 +207,7 @@ public static class SaveStore
 
     private static string Validate(GameState state)
     {
-        if (state.Version is not (1 or 2)) return "此存档版本不受 V0.2 支持。";
+        if (state.Version is not (1 or 2 or 3)) return "此存档版本不受 V0.3 支持。";
         bool legacy = state.Version == 1;
         int width = legacy ? 120 : state.Area == "world" ? WorldData.Size : 56;
         int height = legacy ? 120 : state.Area == "world" ? WorldData.Size : 44;
@@ -221,6 +232,7 @@ public static class SaveStore
             || state.Activated.Contains("center") != connected || state.Completed && !connected)
             return "存档中的关键进度不一致。";
         if (legacy) return "";
+        if (!Enum.IsDefined(state.Difficulty)) return "存档中的难度无效。";
         if (state.Inventory == null || state.LearnedSkills == null || state.Passives == null || state.KilledEnemies == null
             || state.BossesDefeated == null || state.OpenedChests == null || state.Checkpoints == null
             || state.DungeonExplored == null || state.GroundLoot == null)
@@ -235,6 +247,14 @@ public static class SaveStore
         foreach (var slot in new[] { (state.WeaponId, ItemKind.Weapon), (state.ArmorId, ItemKind.Armor), (state.AccessoryId, ItemKind.Accessory) })
             if (slot.Item1 == null || slot.Item1.Length > 0 && (!Items.All.TryGetValue(slot.Item1, out var item) || item.Kind != slot.Item2 || !state.Inventory.Any(stack => stack.Id == slot.Item1)))
                 return "存档中的装备无效。";
+        if (state.Version == 3 && (state.ReserveWeaponId == null || state.ReserveWeaponId.Length > 0
+            && (!Items.All.TryGetValue(state.ReserveWeaponId, out var reserve) || reserve.Kind != ItemKind.Weapon
+                || !state.Inventory.Any(item => item.Id == reserve.Id))))
+            return "存档中的备用武器无效。";
+        bool drained = state.Activated.Contains("marsh_west") && state.Activated.Contains("marsh_east");
+        if (drained != state.Activated.Contains("marsh_drained")
+            || state.Activated.Contains("marsh_complete") != state.KilledEnemies.Contains("marsh_keeper"))
+            return "存档中的湿地进度不一致。";
         if (state.Level < 1 || state.Level > 100 || state.Experience < 0 || state.Experience >= Progression.RequiredXp(state.Level)
             || state.SkillPoints < 0 || state.SkillPoints > state.Level + 1 + (state.LegacyRewardClaimed ? 2 : 0) || state.LearnedSkills.Any(id => !Progression.ActiveSkills.Contains(id))
             || state.Passives.Any(pair => !Progression.PassiveSkills.Contains(pair.Key) || pair.Value < 1 || pair.Value > 3))
@@ -263,7 +283,9 @@ public static class SaveStore
     private static void MigrateLegacy(GameState state)
     {
         state.Explored = state.Explored.Select(tile => tile / 120 * WorldData.Size + tile % 120).ToHashSet();
-        state.Version = 2;
+        state.Version = 3;
+        state.Difficulty = DifficultyLevel.Standard;
+        state.ReserveWeaponId = "hunter_bow";
         state.Area = "world";
         state.WorldX = state.PlayerX;
         state.WorldY = state.PlayerY;
@@ -288,7 +310,7 @@ public static class SaveStore
         state.EnemyKills = state.Deaths = state.BossKills = state.DamageDealt = state.DamageTaken = 0;
         state.RpgCompleted = false;
         state.LegacyRewardClaimed = false;
-        state.Events.Add(new ExplorationEvent(state.PlayedSeconds, "save_migrated", "V0.1 → V0.2"));
+        state.Events.Add(new ExplorationEvent(state.PlayedSeconds, "save_migrated", "V0.1 → V0.3"));
     }
 
     private static bool RelocateLegacyPlayer(GameState state, WorldData world)

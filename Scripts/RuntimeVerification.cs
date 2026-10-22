@@ -25,12 +25,16 @@ public partial class RuntimeVerification : Node
             VerifyWorld();
             await VerifyMovementAndDamage();
             await VerifyOriginalPuzzles();
+            VerifyDifficultyAndMatchups();
             await VerifyCombatAndEquipment();
             await VerifyProgressionAndSkills();
             await VerifyDeathAndUi();
+            await VerifyWetlandAndQuickControls();
             await VerifyDungeon("crypt", "root_boss", "guardian_blade");
             await VerifyDungeon("forge", "forge_boss", "solar_staff");
+            await VerifyGuardianArmorBreak();
             await VerifySavingAndMigration();
+            await VerifyHardBoss();
             GD.Print($"VERIFICATION PASSED: {_checks} checks; both bosses defeated by real attacks and skills.");
             Game.QuitGame();
         }
@@ -54,13 +58,21 @@ public partial class RuntimeVerification : Node
         var terrain = world.Tiles.Cast<Terrain>().ToHashSet();
         Check(new[] { Terrain.Forest, Terrain.Meadow, Terrain.Dunes, Terrain.Wetland, Terrain.Snow }.All(terrain.Contains), "five distinct surface regions");
         var reached = Reachable(world, new(56, 87));
-        Check(world.Objects.All(obj => reached.Contains(obj.Tile)), "all checkpoints, portals and chests reachable");
-        Check(world.EnemySpawns.All(enemy => reached.Contains(enemy.Tile)), "all surface encounters reachable");
+        Check(world.Objects.Where(obj => obj.Id != "marsh_vault").All(obj => reached.Contains(obj.Tile)), "all ungated checkpoints, portals and chests reachable");
+        Check(world.EnemySpawns.Where(enemy => enemy.Id != "marsh_keeper").All(enemy => reached.Contains(enemy.Tile)), "all ungated surface encounters reachable");
+        Check(!reached.Contains(new(170, 128)), "wetland vault is initially separated by water");
         foreach (var tile in new Vector2I[] { new(60, 59), new(24, 32), new(27, 29), new(30, 32), new(91, 43), new(97, 43), new(23, 82) })
             Check(reached.Contains(tile), "original puzzle reachable " + tile);
         Check(!reached.Contains(new(31, 82)), "tide island retains its initial gate");
         Check(new[] { "scavenger", "archer", "wolf", "guardian", "spore", "elite" }.All(kind => world.EnemySpawns.Any(enemy => enemy.Kind == kind)), "five ordinary enemy types and elite have actual spawns");
         Check(Game.Combat.Enemies.Count == world.EnemySpawns.Count, "world encounter nodes instantiated");
+        foreach (int seed in new[] { 1, 42, 2026, -17 })
+        {
+            var sample = new WorldData(seed);
+            var paths = Reachable(sample, new(56, 87));
+            Check(sample.Objects.Where(obj => obj.Id != "marsh_vault").All(obj => paths.Contains(obj.Tile))
+                && !paths.Contains(new(170, 128)), "seed " + seed + " retains reachable content and a closed wetland vault");
+        }
         foreach (string area in new[] { "crypt", "forge" })
         {
             var dungeon = new WorldData(Game.State.Seed, area);
@@ -146,7 +158,7 @@ public partial class RuntimeVerification : Node
         Game.Pause();
         Game.SaveGame();
         var restored = SaveStore.Load(out string error);
-        Check(restored != null && restored.Version == 2 && restored.RuneStep == 1 && restored.Activated.Contains("lake")
+        Check(restored != null && restored.Version == 3 && restored.RuneStep == 1 && restored.Activated.Contains("lake")
             && restored.Explored.Count > 0 && Math.Abs(restored.PlayerX - Game.Wanderer.Position.X) < 0.1f, "partial puzzle, position and fog load: " + error);
         Game.ContinueGame();
         Check(Game.IsPlaying && Game.State.RuneStep == 1 && !Game.World.Blocked[26, 82], "continue rebuilds opened bridge and partial rune");
@@ -163,6 +175,142 @@ public partial class RuntimeVerification : Node
         Check(Game.IsPlaying && !Game.State.RpgCompleted, "relic completion allows RPG adventure to continue");
         Game.SaveGame();
         Check(SaveStore.Load(out error)?.LegacyRewardClaimed == true, "relic reward skill points remain valid in saved data: " + error);
+    }
+
+    private void VerifyDifficultyAndMatchups()
+    {
+        Game.Resume();
+        Position(new(56, 87));
+        var probes = new List<Enemy>();
+        foreach (string kind in new[] { "scavenger", "wolf", "archer", "guardian", "spore", "elite", "root_boss", "forge_boss" })
+            probes.Add(CreateProbe(kind, Game.Wanderer.Position + new Vector2(1100, 0)));
+        var baseline = probes.ToDictionary(e => e, e => (e.MaxHealth, e.AttackDamage, e.Defense, e.MoveSpeed));
+        probes[0].Health = probes[0].MaxHealth / 2;
+        Check(Game.SetDifficulty(DifficultyLevel.Expert), "difficulty can change outside combat");
+        foreach (var probe in probes)
+        {
+            var original = baseline[probe];
+            Check(probe.MaxHealth > original.MaxHealth && probe.AttackDamage > original.AttackDamage
+                && probe.Defense > original.Defense && probe.MoveSpeed > original.MoveSpeed, probe.Kind + " HP, attack, defense and speed scale on expert");
+        }
+        for (int i = 0; i < 8; i++)
+        {
+            Game.SetDifficulty(DifficultyLevel.Relaxed);
+            Game.SetDifficulty(DifficultyLevel.Expert);
+        }
+        Game.SetDifficulty(DifficultyLevel.Standard);
+        Check(probes[0].Health == baseline[probes[0]].MaxHealth / 2, "repeated difficulty changes never heal wounded enemies through rounding");
+        var armored = probes.Single(e => e.Kind == "guardian");
+        int Hit(Enemy enemy, DamageKind type)
+        {
+            enemy.Health = enemy.MaxHealth;
+            enemy.TakeDamage(20, Vector2.Zero, type);
+            return enemy.MaxHealth - enemy.Health;
+        }
+        Check(Hit(armored, DamageKind.Arcane) > Hit(armored, DamageKind.Slash)
+            && Hit(armored, DamageKind.Slash) > Hit(armored, DamageKind.Pierce), "real armored hits favor arcane over slash and arrows");
+        var plant = probes.Single(e => e.Kind == "spore");
+        Check(Hit(plant, DamageKind.Fire) > Hit(plant, DamageKind.Pierce), "fire actually deals more damage to plants");
+        var wolf = probes.Single(e => e.Kind == "wolf");
+        Check(Hit(wolf, DamageKind.Slash) > Hit(wolf, DamageKind.Frost), "beasts are vulnerable to slash and resist frost");
+        armored.Position = Game.Wanderer.Position + Vector2.Right * 100;
+        Check(!Game.SetDifficulty(DifficultyLevel.Hard) && Game.State.Difficulty == DifficultyLevel.Standard, "nearby enemy prevents changing difficulty during combat");
+        foreach (var probe in probes) Game.Combat.RemoveDead(probe);
+        Game.SaveGame();
+        Check(SaveStore.Load(out string error)?.Difficulty == DifficultyLevel.Standard, "difficulty persists through the real save interface: " + error);
+    }
+
+    private Enemy CreateProbe(string kind, Vector2 at)
+    {
+        var probe = new Enemy();
+        probe.Configure(Game.Combat, new("verify_" + kind, kind, new(56, 87)));
+        probe.Position = at;
+        Game.Combat.Enemies.Add(probe);
+        Game.Combat.AddChild(probe);
+        probe.SetPhysicsProcess(false);
+        return probe;
+    }
+
+    private async Task VerifyWetlandAndQuickControls()
+    {
+        InteractObject("marsh_pump");
+        Check(Game.State.Journal.Any(entry => entry.Text.Contains("压力表")), "pump station records a usable regional clue");
+        OpenChest("marsh_supply");
+        Game.EquipItem("reed_bow");
+        string reserve = Game.State.ReserveWeaponId;
+        Game.QuickSwapWeapon();
+        Check(Game.State.WeaponId == reserve && Game.State.ReserveWeaponId == "reed_bow", "quick swap exchanges equipped and reserve weapons");
+        Game.QuickSwapWeapon();
+        Check(Game.State.WeaponId == "reed_bow", "quick swap returns to the bow");
+        InteractObject("marsh_west");
+        Check(Game.State.Activated.Contains("marsh_west") && !Game.State.Activated.Contains("marsh_drained"), "first valve leaves the reservoir flooded");
+        Game.SaveGame();
+        Check(SaveStore.Load(out string error)?.Activated.Contains("marsh_west") == true, "partial wetland progress saves: " + error);
+        InteractObject("marsh_east");
+        await Frames(3);
+        var reached = Reachable(Game.World, new(56, 87));
+        Check(Game.State.Activated.Contains("marsh_drained") && reached.Contains(new(170, 128))
+            && Game.World.Objects.All(obj => reached.Contains(obj.Tile)) && Game.World.EnemySpawns.All(e => reached.Contains(e.Tile)), "draining water opens the vault, shortcut and all encounters without blocking old routes");
+        OpenChest("marsh_vault");
+        Game.EquipItem("marsh_charm");
+        PositionWorld(_combatSpace);
+        Game.Combat.ResetPlayerCombat();
+        Check(Game.Wanderer.TryDodge() && Game.Combat.DodgeEmpowerTime == 2, "frost charm gives a real two-second attack window after dodge");
+        await Frames(14);
+        PositionWorld(_combatSpace);
+        Game.EquipItem("iron_sword");
+        var chilled = CreateProbe("guardian", _combatSpace + Vector2.Right * 48);
+        Game.Combat.TryAttack(Vector2.Right);
+        await Frames(12);
+        Check(chilled.SlowTime > 0 && Game.Combat.DodgeEmpowerTime == 0, "empowered ordinary attack applies slow and consumes the charm window");
+        Game.Combat.RemoveDead(chilled);
+        Game.EquipItem("reed_bow");
+        await WaitForAttack();
+        Input.ActionPress("charge_attack");
+        await Frames(46);
+        Check(Game.Combat.ChargeProgress >= .99f && !Game.Combat.TryAttack(Vector2.Right), "holding right mouse charges the bow and blocks simultaneous normal fire");
+        Vector2 aim = Game.Wanderer.AimDirection;
+        var first = CreateProbe("guardian", Game.Wanderer.Position + aim * 65);
+        var second = CreateProbe("guardian", Game.Wanderer.Position + aim * 100);
+        int firstHealth = first.Health, secondHealth = second.Health;
+        Input.ActionRelease("charge_attack");
+        await Frames(12);
+        Check(first.Health < firstHealth && second.Health < secondHealth, "fully charged arrow physically passes through two enemies");
+        Game.Combat.RemoveDead(first); Game.Combat.RemoveDead(second);
+        var keeper = Game.Combat.Enemies.Single(enemy => enemy.SpawnId == "marsh_keeper");
+        Game.EquipItem("iron_sword");
+        await FightNormal(keeper);
+        Check(Game.State.Activated.Contains("marsh_complete") && Game.State.GroundLoot.Any(loot => loot.Id == "sluice_staff"), "wetland guardian defeat completes the event and drops its usable weapon");
+        var reward = Game.State.GroundLoot.Single(loot => loot.Id == "sluice_staff");
+        PositionWorld(new(reward.X, reward.Y)); Game.InteractNearby();
+        Game.EquipItem("sluice_staff");
+        Check(Game.State.WeaponId == "sluice_staff" && Items.Get(Game.State.WeaponId).Damage == DamageKind.Arcane, "regional reward equips an arcane weapon");
+        Position(new(56, 87));
+        Game.State.Health = Game.Stats.MaxHealth - 60;
+        int potions = Count("health_potion");
+        Game._UnhandledInput(new InputEventAction { Action = "quick_heal", Pressed = true });
+        Check(Count("health_potion") == potions - 1 && Game.State.Health == Game.Stats.MaxHealth, "Q consumes a potion without opening inventory");
+        Game.SaveGame(); Game.ContinueGame();
+        Check(Game.State.Activated.Contains("marsh_complete") && !Game.World.IsBlocked(162, 129)
+            && !Game.Combat.Enemies.Any(e => e.SpawnId == "marsh_keeper") && Count("marsh_charm") == 1, "wetland terrain, reward, defeated guardian and shortcut persist after reload");
+    }
+
+    private async Task VerifyGuardianArmorBreak()
+    {
+        PositionWorld(_combatSpace);
+        Game.EquipItem("guardian_blade");
+        Game.Combat.ResetPlayerCombat();
+        var armored = CreateProbe("guardian", _combatSpace + Vector2.Right * 48);
+        for (int i = 0; i < 3; i++)
+        {
+            armored.Health = armored.MaxHealth;
+            armored.Position = _combatSpace + Vector2.Right * 48;
+            Game.Combat.TryAttack(Vector2.Right);
+            await Frames(14);
+            if (i < 2) await WaitForAttack();
+        }
+        Check(armored.ArmorBreakTime > 0 && armored.Defense == 0, "guardian blade combo finisher actually removes armor for three seconds");
+        Game.Combat.RemoveDead(armored);
     }
 
     private async Task VerifyCombatAndEquipment()
@@ -363,6 +511,17 @@ public partial class RuntimeVerification : Node
         else
         {
             Check(DungeonController.HeatWarning(3.2) && !DungeonController.HeatActive(3.2) && DungeonController.HeatActive(3.9), "forge floor warning precedes its damage phase");
+            var heatTarget = Game.Combat.Enemies.First(enemy => !enemy.IsBoss);
+            int initialHeatHp = heatTarget.Health;
+            Vector2 previousHeatPosition = heatTarget.Position;
+            Position(new(6, 22));
+            heatTarget.Position = DungeonLayout.HeatFloor.GetCenter();
+            heatTarget.SetPhysicsProcess(false);
+            Game.State.PlayedSeconds = Math.Ceiling(Game.State.PlayedSeconds / 4.5) * 4.5 + 3.9;
+            await Frames(2);
+            Check(heatTarget.Health < initialHeatHp, "forge floor actually damages enemies and permits environmental tactics");
+            heatTarget.Position = previousHeatPosition;
+            heatTarget.SetPhysicsProcess(true);
             InteractObject("forge_coolant");
             Check(Game.State.Activated.Contains("forge_coolant") && Game.State.Activated.Contains("forge_gate") && !Game.World.Blocked[38, 22], "forge coolant disables hazard and opens gate");
             InteractObject("forge_chest_cargo");
@@ -446,6 +605,7 @@ public partial class RuntimeVerification : Node
         Game.EquipItem("frost_armor");
         Game.EquipItem("tide_charm");
         Position(new(56, 87));
+        Check(Game.SetDifficulty(DifficultyLevel.Hard), "hard difficulty selected before save roundtrip");
         Game.Combat.DropItem("health_potion", 2, Game.Wanderer.Position + Vector2.Down * 24);
         Game.Pause(); Game.SaveGame();
         string valid = FileAccess.GetFileAsString(SavePath);
@@ -455,6 +615,7 @@ public partial class RuntimeVerification : Node
         Check(Game.IsPlaying && Game.State.RpgCompleted && Game.State.Level == level && Game.State.Inventory.Sum(item => item.Count) == inventory
             && Game.State.WeaponId == "solar_staff" && Game.State.ArmorId == "frost_armor" && Game.State.AccessoryId == "tide_charm",
             "completed RPG save resumes adventure with actual equipment and inventory");
+        Check(Game.State.Difficulty == DifficultyLevel.Hard && Game.State.Activated.Contains("marsh_complete"), "nondefault difficulty and regional event progress survive restart");
         Check(Game.State.Explored.Count >= fog && Game.State.GroundLoot.Count == loot && Game.State.BossesDefeated.Count == 2
             && Game.State.LearnedSkills.Count == 3 && Game.State.Passives.Count == 3 && Game.State.Deaths > 0,
             "fog, loot, skills, passives, deaths and boss states persist");
@@ -471,11 +632,19 @@ public partial class RuntimeVerification : Node
         Check(!SaveStore.Save(Game.State, out error) && FileAccess.GetFileAsString(SavePath) == "{ broken json", "saving preserves corrupt external file instead of overwriting");
         WriteSave("{\"Version\":2,\"PlayerX\":-1,\"PlayerY\":100}");
         Check(SaveStore.Load(out error) == null && error.Length > 0, "external save with invalid position is rejected");
+        WriteSave("{\"Version\":3,\"PlayerX\":1808,\"PlayerY\":2800,\"Difficulty\":99}");
+        Check(SaveStore.Load(out error) == null && error.Contains("难度"), "invalid difficulty in external save is rejected");
+        WriteSave("""
+            {"Version":2,"PlayerX":5200,"PlayerY":3920,"Inventory":[{"Id":"rust_sword","Count":1},{"Id":"ember_staff","Count":1},{"Id":"linen_armor","Count":1}]}
+            """);
+        var previousRpg = SaveStore.Load(out error);
+        Check(previousRpg?.Version == 3 && previousRpg.Difficulty == DifficultyLevel.Standard && previousRpg.ReserveWeaponId == "ember_staff"
+            && previousRpg.Events.Any(e => e.Action == "save_relocated"), "V0.2 save receives standard difficulty, an owned reserve weapon and safe relocation from new water: " + error);
         int oldIndex = 87 * 120 + 56;
         string legacy = $"{{\"Version\":1,\"Seed\":73129,\"PlayerX\":1808,\"PlayerY\":2800,\"Explored\":[{oldIndex}],\"RuneStep\":1,\"PlayedSeconds\":42}}";
         WriteSave(legacy);
         var migrated = SaveStore.Load(out error);
-        Check(migrated != null && migrated.Version == 2 && migrated.RuneStep == 1 && migrated.Explored.Contains(87 * WorldData.Size + 56)
+        Check(migrated != null && migrated.Version == 3 && migrated.RuneStep == 1 && migrated.Explored.Contains(87 * WorldData.Size + 56)
             && migrated.Inventory.Any(item => item.Id == "hunter_bow") && migrated.Checkpoints.Contains("camp") && migrated.Health > 0,
             "minimal V0.1 save migrates old fog, partial puzzle and RPG defaults: " + error);
         WriteSave("{\"Version\":1,\"Seed\":73129,\"PlayerX\":1808,\"PlayerY\":2800,\"Completed\":true,\"RuneStep\":3,\"Mirrors\":[0,2],\"Activated\":[\"bridge\",\"lake\",\"forest\",\"dunes\",\"center\"]}");
@@ -489,6 +658,28 @@ public partial class RuntimeVerification : Node
         Game.ContinueGame();
         Check(Game.State.RpgCompleted && Game.State.BossesDefeated.Count == 2 && Game.IsPlaying, "test fixture restored after external-file checks");
         await Frames(3);
+    }
+
+    private async Task VerifyHardBoss()
+    {
+        Game.ReturnToMenu();
+        Game.SetDifficulty(DifficultyLevel.Hard);
+        Game.StartNew();
+        Check(Game.State.Difficulty == DifficultyLevel.Hard, "new-game difficulty selection affects the actual new world");
+        // Experience fixture matches clearing ordinary encounter groups before the dungeon.
+        Progression.GrantExperience(Game.State, 900);
+        foreach (string skill in new[] { "volley", "nova", "vitality", "power", "guard" }) Game.LearnSkill(skill);
+        OpenChest("caravan_chest"); OpenChest("dunes_cache");
+        OpenChest("forest_cache"); OpenChest("archive_cache");
+        Game.EquipItem("scale_armor"); Game.EquipItem("iron_sword");
+        Game.EnterDungeon("crypt");
+        InteractObject("crypt_supply_a"); InteractObject("crypt_supply_b");
+        var boss = Game.Combat.Enemies.Single(e => e.Kind == "root_boss");
+        Check(boss.MaxHealth == 581 && boss.AttackDamage > 27 && boss.MoveSpeed > 61, "hard boss uses increased combat attributes");
+        Game.State.Health = Game.Stats.MaxHealth;
+        await FightBoss(boss);
+        Check(Game.State.BossesDefeated.Contains("root_boss") && Game.State.Difficulty == DifficultyLevel.Hard,
+            "hard boss completes through real attacks, skills and dodge with finite potions");
     }
 
     private void KeepAliveWithPotion()
@@ -567,7 +758,7 @@ public partial class RuntimeVerification : Node
 
     private static void ReleaseMovement()
     {
-        foreach (string action in new[] { "move_left", "move_right", "move_up", "move_down", "run", "attack", "dodge" }) Input.ActionRelease(action);
+        foreach (string action in new[] { "move_left", "move_right", "move_up", "move_down", "run", "attack", "dodge", "charge_attack" }) Input.ActionRelease(action);
     }
 
     private void Check(bool condition, string label)

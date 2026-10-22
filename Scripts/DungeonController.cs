@@ -1,5 +1,6 @@
 using Godot;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace ProjectUnknown;
 
@@ -7,6 +8,8 @@ public partial class DungeonController : Node
 {
     private Game _game = null!;
     private long _lastHeatCycle = -1;
+    private readonly HashSet<Enemy> _heated = new();
+    private bool _playerHeated;
 
     public bool BossAccessible => _game.World.Area == "world"
         || _game.State.Activated.Contains($"{_game.World.Area}_gate");
@@ -34,10 +37,16 @@ public partial class DungeonController : Node
     {
         if (!_game.IsPlaying || _game.World.Area != "forge" || _game.State.Activated.Contains("forge_coolant")) return;
         long cycle = (long)(_game.State.PlayedSeconds / 4.5);
-        if (_lastHeatCycle == cycle || !HeatActive(_game.State.PlayedSeconds)
-            || !DungeonLayout.HeatFloor.HasPoint(_game.Wanderer.Position)) return;
-        _lastHeatCycle = cycle;
-        _game.Combat.DamagePlayer(20, DungeonLayout.HeatFloor.GetCenter());
+        if (_lastHeatCycle != cycle) { _lastHeatCycle = cycle; _heated.Clear(); _playerHeated = false; }
+        if (!HeatActive(_game.State.PlayedSeconds)) return;
+        if (!_playerHeated && DungeonLayout.HeatFloor.HasPoint(_game.Wanderer.Position))
+        {
+            _playerHeated = true;
+            _game.Combat.DamagePlayer(20, DungeonLayout.HeatFloor.GetCenter());
+        }
+        foreach (var enemy in _game.Combat.Enemies.ToArray())
+            if (enemy.IsAlive && DungeonLayout.HeatFloor.HasPoint(enemy.Position) && _heated.Add(enemy))
+                enemy.TakeDamage(36, Vector2.Zero, DamageKind.Environment);
     }
 
     public bool Interact(WorldObject obj, out PuzzleFeedback feedback)

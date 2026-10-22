@@ -9,4 +9,4 @@ mkdir -p "$task_root/Builds/Windows"
 dotnet build "$task_root/ProjectUnknown.csproj" -c Release
 "$godot_bin" --headless --path "$task_root" --export-release "Windows Desktop" "$task_root/Builds/Windows/ProjectUnknown.exe"
 cp "$task_root/Assets/Fonts/LICENSE-NotoSansCJK.txt" "$task_root/Builds/Windows/LICENSE-NotoSansCJK.txt"
-printf 'Windows V0.2 build: %s\n' "$task_root/Builds/Windows/ProjectUnknown.exe"
+printf 'Windows build: %s\n' "$task_root/Builds/Windows/ProjectUnknown.exe"

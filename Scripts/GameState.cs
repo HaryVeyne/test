@@ -4,7 +4,8 @@ namespace ProjectUnknown;
 
 public sealed class GameState
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
+    public DifficultyLevel Difficulty { get; set; } = DifficultyLevel.Standard;
     public int Seed { get; set; } = 73129;
     public float PlayerX { get; set; }
     public float PlayerY { get; set; }
@@ -34,6 +35,7 @@ public sealed class GameState
         new("linen_armor", 1), new("health_potion", 3)
     };
     public string WeaponId { get; set; } = "rust_sword";
+    public string ReserveWeaponId { get; set; } = "hunter_bow";
     public string ArmorId { get; set; } = "linen_armor";
     public string AccessoryId { get; set; } = "";
     public HashSet<string> LearnedSkills { get; set; } = new() { "cleave" };

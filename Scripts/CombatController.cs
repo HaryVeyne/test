@@ -11,7 +11,11 @@ public partial class CombatController : Node2D
     public List<Enemy> Enemies { get; } = new();
     public float[] SkillCooldowns { get; } = new float[3];
     public float AttackCooldown { get; private set; }
-    public bool HasThreatNearby => Enemies.Any(enemy => enemy.IsAlive && enemy.GlobalPosition.DistanceSquaredTo(Game.Wanderer.GlobalPosition) < 350 * 350);
+    public bool HasThreatNearby => Enemies.Any(enemy => enemy.IsAlive && enemy.IsAccessible
+        && (enemy.GlobalPosition.DistanceSquaredTo(Game.Wanderer.GlobalPosition) < 420 * 420 || enemy.AiState is "Windup" or "Attack"))
+        || _projectiles.Any(p => p.EnemyProjectile && p.Position.DistanceSquaredTo(Game.Wanderer.Position) < 500 * 500);
+    public float ChargeProgress => _charging ? Mathf.Clamp(_chargeTime / .7f, 0, 1) : 0;
+    public float DodgeEmpowerTime { get; private set; }
     public string LootPrompt
     {
         get
@@ -22,6 +26,7 @@ public partial class CombatController : Node2D
     }
 
     private AStarGrid2D _navigation = new();
+    private Font _combatFont = null!;
     private readonly List<Visual> _visuals = new();
     private readonly List<Projectile> _projectiles = new();
     private readonly HashSet<Enemy> _swordHits = new();
@@ -29,10 +34,13 @@ public partial class CombatController : Node2D
     private float _time;
     private int _combo;
     private float _lastSwordTime = -10;
+    private bool _charging;
+    private float _chargeTime;
 
     public void Configure(Game game)
     {
         Game = game;
+        _combatFont = GD.Load<Font>("res://Assets/Fonts/NotoSansSC-Regular.otf");
         ZIndex = 18;
         RefreshNavigation();
         foreach (var spawn in Game.World.EnemySpawns)
@@ -78,9 +86,16 @@ public partial class CombatController : Node2D
         float dt = (float)delta;
         _time += dt;
         AttackCooldown = Mathf.Max(0, AttackCooldown - dt);
+        DodgeEmpowerTime = Mathf.Max(0, DodgeEmpowerTime - dt);
         for (int i = 0; i < SkillCooldowns.Length; i++) SkillCooldowns[i] = Mathf.Max(0, SkillCooldowns[i] - dt);
         if (!Game.Wanderer.IsDead)
         {
+            if (Input.IsActionJustPressed("charge_attack")) BeginCharge();
+            if (_charging)
+            {
+                _chargeTime = Mathf.Min(.7f, _chargeTime + dt);
+                if (!Input.IsActionPressed("charge_attack")) ReleaseCharge();
+            }
             if (Input.IsActionPressed("attack")) TryAttack(Game.Wanderer.AimDirection);
             for (int i = 0; i < 3; i++)
                 if (Input.IsActionJustPressed($"skill_{i + 1}")) TrySkill(i, Game.Wanderer.GetGlobalMousePosition());
@@ -106,7 +121,7 @@ public partial class CombatController : Node2D
 
     public bool TryAttack(Vector2 direction)
     {
-        if (!Game.IsPlaying || Game.Wanderer.IsDead || AttackCooldown > 0) return false;
+        if (!Game.IsPlaying || Game.Wanderer.IsDead || AttackCooldown > 0 || _charging) return false;
         if (direction.LengthSquared() < 0.01f) direction = Game.Wanderer.AimDirection;
         direction = direction.Normalized();
         WeaponKind kind = Game.State.WeaponId.Length == 0 ? WeaponKind.Sword : Items.Get(Game.State.WeaponId).Weapon;
@@ -120,6 +135,10 @@ public partial class CombatController : Node2D
         }
         AttackCooldown = cooldown * Game.Stats.CooldownScale;
         _attack = new Attack(kind, direction, windup, _combo);
+        _attack.Damage = Game.Stats.Attack;
+        _attack.WeaponId = Game.State.WeaponId;
+        _attack.Type = Game.State.WeaponId.Length == 0 ? DamageKind.Slash : Items.Get(Game.State.WeaponId).Damage;
+        _attack.Chill = ConsumeDodgeEmpower();
         Game.Record("attack", $"{Game.State.Area}:{Game.State.WeaponId};dir={direction.X:0.00},{direction.Y:0.00}");
         _swordHits.Clear();
         Game.Wanderer.BeginAttack(kind, direction, cooldown, _combo);
@@ -128,40 +147,79 @@ public partial class CombatController : Node2D
 
     private void UpdateAttack(float dt)
     {
-        if (_attack == null) return;
+        var attack = _attack;
+        if (attack == null) return;
         if (Game.Wanderer.IsDead) { _attack = null; return; }
-        _attack.Time -= dt;
-        if (_attack.Time > 0 && !_attack.Fired) return;
+        attack.Time -= dt;
+        if (attack.Time > 0 && !attack.Fired) return;
         var position = Game.Wanderer.GlobalPosition;
-        int damage = Game.Stats.Attack;
-        if (_attack.Kind == WeaponKind.Sword)
+        int damage = attack.Damage;
+        if (attack.Kind == WeaponKind.Sword)
         {
-            float range = _attack.Combo == 2 ? 78 : 68;
-            if (!_attack.Fired)
+            float range = attack.Combo == 2 ? 78 : 68;
+            if (!attack.Fired)
             {
-                var color = _attack.Combo == 2 ? new Color("efcc78") : new Color("c4efe5");
-                _visuals.Add(new Visual { Position = position, Radius = range, Direction = _attack.Direction, Cone = true, Duration = 0.16f, Color = color });
-                _attack.Fired = true;
-                _attack.Time = 0.09f;
+                var color = attack.Combo == 2 ? new Color("efcc78") : new Color("c4efe5");
+                _visuals.Add(new Visual { Position = position, Radius = range, Direction = attack.Direction, Cone = true, Duration = 0.16f, Color = color });
+                attack.Fired = true;
+                attack.Time = 0.09f;
             }
             foreach (var enemy in Enemies.ToArray())
             {
                 if (!enemy.IsAlive || _swordHits.Contains(enemy)) continue;
                 Vector2 offset = enemy.GlobalPosition - position;
-                if (offset.Length() > range + (enemy.IsBoss ? 19 : 9) || (offset.Length() > 12 && _attack.Direction.Dot(offset.Normalized()) < 0.25f)) continue;
+                if (offset.Length() > range + (enemy.IsBoss ? 19 : 9) || (offset.Length() > 12 && attack.Direction.Dot(offset.Normalized()) < 0.25f)) continue;
                 if (!HasLineOfSight(position, enemy.GlobalPosition)) continue;
                 _swordHits.Add(enemy);
-                enemy.TakeDamage((int)(damage * (_attack.Combo == 2 ? 1.4f : 1f)), offset.Normalized() * (_attack.Combo == 2 ? 170 : 100));
+                enemy.TakeDamage((int)(damage * (attack.Combo == 2 ? 1.4f : 1f)), offset.Normalized() * (attack.Combo == 2 ? 170 : 100),
+                    attack.Type, attack.WeaponId == "guardian_blade" && attack.Combo == 2, attack.Chill);
             }
-            if (_attack.Time <= 0) _attack = null;
+            if (attack.Time <= 0) _attack = null;
         }
         else
         {
-            bool magic = _attack.Kind == WeaponKind.Staff;
-            SpawnProjectile(position + _attack.Direction * 19, _attack.Direction, false,
-                (int)(damage * (magic ? 1.15f : 1f)), magic ? 310 : 540, magic ? 6 : 3, magic);
+            bool magic = attack.Kind == WeaponKind.Staff;
+            SpawnProjectile(position + attack.Direction * 19, attack.Direction, false,
+                (int)(damage * (magic ? 1.15f : 1f)), magic ? 310 : 540, magic ? 6 : 3, magic,
+                damageType: attack.Type, chill: attack.Chill);
             _attack = null;
         }
+    }
+
+    public bool BeginCharge()
+    {
+        if (!Game.IsPlaying || Game.Wanderer.IsDead || Game.State.WeaponId != "reed_bow" || AttackCooldown > 0 || _attack != null) return false;
+        _charging = true;
+        _chargeTime = 0;
+        return true;
+    }
+
+    public bool ReleaseCharge()
+    {
+        if (!_charging) return false;
+        float power = Mathf.Clamp(_chargeTime / .7f, 0, 1);
+        _charging = false;
+        Vector2 direction = Game.Wanderer.AimDirection;
+        SpawnProjectile(Game.Wanderer.Position + direction * 19, direction, false,
+            Mathf.RoundToInt(Game.Stats.Attack * (1 + .8f * power)), 620, 4, piercing: power >= .99f,
+            damageType: DamageKind.Pierce, chill: ConsumeDodgeEmpower());
+        AttackCooldown = .6f * Game.Stats.CooldownScale;
+        Game.Wanderer.BeginAttack(WeaponKind.Bow, direction, .25f);
+        Game.Record("charged_attack", $"power={power:0.00}");
+        return true;
+    }
+
+    public void OnDodge()
+    {
+        if (Game.State.AccessoryId == "marsh_charm") DodgeEmpowerTime = 2;
+        Game.Record("dodge", Game.State.Area);
+    }
+
+    private bool ConsumeDodgeEmpower()
+    {
+        bool result = DodgeEmpowerTime > 0;
+        DodgeEmpowerTime = 0;
+        return result;
     }
 
     public bool TrySkill(int index, Vector2 target)
@@ -184,7 +242,7 @@ public partial class CombatController : Node2D
             SpawnEffect(origin, 96, new Color("d9e4b3"), 0.38f);
             foreach (var enemy in Enemies.ToArray())
                 if (enemy.IsAlive && enemy.GlobalPosition.DistanceTo(origin) <= 105 && HasLineOfSight(origin, enemy.GlobalPosition))
-                    enemy.TakeDamage(damage * 2, (enemy.GlobalPosition - origin).Normalized() * 220);
+                    enemy.TakeDamage(damage * 2, (enemy.GlobalPosition - origin).Normalized() * 220, DamageKind.Slash);
             Game.Wanderer.BeginAttack(WeaponKind.Sword, direction, 0.35f);
         }
         else if (index == 1)
@@ -202,7 +260,7 @@ public partial class CombatController : Node2D
                 if (enemy.IsAlive && enemy.GlobalPosition.DistanceTo(target) <= 100 && HasLineOfSight(target, enemy.GlobalPosition))
                 {
                     enemy.SlowTime = 3;
-                    enemy.TakeDamage((int)(damage * 2.3f), (enemy.GlobalPosition - target).Normalized() * 100);
+                    enemy.TakeDamage((int)(damage * 2.3f), (enemy.GlobalPosition - target).Normalized() * 100, DamageKind.Frost);
                 }
             Game.Wanderer.BeginAttack(WeaponKind.Staff, direction, 0.35f);
         }
@@ -253,12 +311,13 @@ public partial class CombatController : Node2D
         .OrderBy(loot => new Vector2(loot.X, loot.Y).DistanceSquaredTo(Game.Wanderer.GlobalPosition)).FirstOrDefault();
 
     public Projectile SpawnProjectile(Vector2 position, Vector2 direction, bool enemy, int damage, float speed = 300,
-        float radius = 4, bool magic = false, bool piercing = false, float lifetime = 2.5f, Enemy? source = null)
+        float radius = 4, bool magic = false, bool piercing = false, float lifetime = 2.5f, Enemy? source = null,
+        DamageKind damageType = DamageKind.Pierce, bool chill = false)
     {
         var projectile = new Projectile { Position = position };
         _projectiles.Add(projectile);
         AddChild(projectile);
-        projectile.Configure(this, direction, enemy, damage, speed, radius, magic, piercing, lifetime, source);
+        projectile.Configure(this, direction, enemy, damage, speed, radius, magic, piercing, lifetime, source, damageType, chill);
         return projectile;
     }
 
@@ -271,13 +330,16 @@ public partial class CombatController : Node2D
     public void CancelAttack()
     {
         _attack = null;
+        _charging = false;
+        _chargeTime = 0;
         _swordHits.Clear();
         Game.Wanderer.CancelAttackMotion();
     }
 
     public void ResetPlayerCombat()
     {
-        _attack = null;
+        CancelAttack();
+        DodgeEmpowerTime = 0;
         _visuals.Clear();
         foreach (var projectile in _projectiles.ToArray()) projectile.Expire();
         AttackCooldown = 0;
@@ -300,8 +362,8 @@ public partial class CombatController : Node2D
     public void SpawnEffect(Vector2 position, float radius, Color color, float duration = 0.4f)
         => _visuals.Add(new Visual { Position = position, Radius = radius, Duration = duration, Color = color });
 
-    public void DamageNumber(Vector2 position, int number, Color color)
-        => _visuals.Add(new Visual { Position = position, Duration = 0.65f, Color = color, Text = number.ToString() });
+    public void DamageNumber(Vector2 position, int number, Color color, string effect = "")
+        => _visuals.Add(new Visual { Position = position, Duration = 0.65f, Color = color, Text = effect.Length == 0 ? number.ToString() : $"{number} {effect}" });
 
     public static float DistanceToSegment(Vector2 position, Vector2 from, Vector2 to)
     {
@@ -334,7 +396,7 @@ public partial class CombatController : Node2D
             Color color = new(visual.Color, visual.Warning ? 0.45f + t * 0.4f : (1 - t) * 0.8f);
             if (visual.Text.Length > 0)
             {
-                DrawString(ThemeDB.FallbackFont, visual.Position + new Vector2(-7, -t * 25), visual.Text, HorizontalAlignment.Left, -1, 17, color);
+                DrawString(_combatFont, visual.Position + new Vector2(-7, -t * 25), visual.Text, HorizontalAlignment.Left, -1, 17, color);
             }
             else if (visual.Line)
             {
@@ -373,6 +435,10 @@ public partial class CombatController : Node2D
         public float Time = windup;
         public int Combo = combo;
         public bool Fired;
+        public int Damage;
+        public string WeaponId = "";
+        public DamageKind Type;
+        public bool Chill;
     }
 
     private sealed class Visual

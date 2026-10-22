@@ -1,25 +1,25 @@
-name: Windows V0.2 release
+name: Windows V0.3 release
 
 on:
   push:
-    branches: [ci/windows-release-v02]
+    branches: [ci/windows-release-v03]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: windows-release-v02
+  group: windows-release-v03
   cancel-in-progress: false
 
 env:
   GODOT_VERSION: '4.6.3'
-  RELEASE_TAG: v0.2.0
-  PACKAGE: ProjectUnknown-V0.2-Windows-x64.zip
+  RELEASE_TAG: v0.3.0
+  PACKAGE: ProjectUnknown-V0.3-Windows-x64.zip
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -64,8 +64,8 @@ jobs:
           package, notes = map(pathlib.Path, sys.argv[1:])
           with package.open('rb') as stream:
               checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
-          body = re.sub(r'Windows ZIP SHA-256：`[0-9a-f]{64}`', f'Windows ZIP SHA-256：`{checksum}`', notes.read_text())
-          notes.write_text(body)
+          body = re.sub(r'\nWindows ZIP SHA-256：`[0-9a-f]{64}`\n?', '', notes.read_text()).rstrip()
+          notes.write_text(body + f'\n\nWindows ZIP SHA-256：`{checksum}`\n')
           PY
           gh release upload "$RELEASE_TAG" "Builds/$PACKAGE"
           gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/release.md" --draft=false
