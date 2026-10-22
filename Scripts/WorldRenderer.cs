@@ -56,10 +56,11 @@ public partial class WorldRenderer : Node2D
             }
             for (int xx = x; xx < x + width; xx++)
             for (int yy = y; yy < y + height; yy++) covered[xx, yy] = true;
+            using var shape = new RectangleShape2D { Size = new Vector2(width * 32, height * 32) };
             _collisions.AddChild(new CollisionShape2D
             {
                 Position = new Vector2((x + width * 0.5f) * 32, (y + height * 0.5f) * 32),
-                Shape = new RectangleShape2D { Size = new Vector2(width * 32, height * 32) }
+                Shape = shape
             });
         }
     }
@@ -93,6 +94,7 @@ public partial class WorldRenderer : Node2D
         if (IsInView(new(12, 54), 130)) DrawHollow();
         if (IsInView(new(48, 108), 130)) DrawBell();
         DrawExtendedLandmarks();
+        if (IsInView(new(172, 130), 450)) DrawWetlandStation();
         foreach (WorldObject obj in _world.Objects)
             if (IsInView(obj.Tile, 120)) DrawWorldObject(obj);
         DrawFloatingMotes();
@@ -716,6 +718,24 @@ public partial class WorldRenderer : Node2D
         Vector2 p = WorldData.Center(obj.Tile);
         switch (obj.Kind)
         {
+            case "valve":
+                Rect(p, -12, -8, 24, 32, new Color("647d78"));
+                Rect(p, -4, -32, 8, 31, new Color("8b9984"));
+                Ring(p + new Vector2(0, -23), 14, Active(obj.Id) ? Cyan : Gold, 4);
+                DrawLine(p + new Vector2(-12, -23), p + new Vector2(12, -23), Active(obj.Id) ? Cyan : Gold, 3);
+                Rect(p, 14, 4, 26, 6, new Color("9c8f67"));
+                DrawLight(p + new Vector2(0, -23), Active(obj.Id) ? Cyan : Gold, 24);
+                break;
+            case "notice":
+                Rect(p, -25, -35, 50, 49, new Color("596f70"));
+                Rect(p, -19, -29, 38, 32, Ink);
+                for (int i = 0; i < 2; i++)
+                {
+                    bool lit = Active(i == 0 ? "marsh_west" : "marsh_east");
+                    DrawCircle(p + new Vector2(-10 + i * 20, -13), 6, lit ? Cyan : new Color("686a55"));
+                }
+                Rect(p, -29, 14, 58, 9, new Color("9b9e85"));
+                break;
             case "checkpoint":
                 if (obj.Id == "camp") return;
                 bool visited = _state.Checkpoints.Contains(obj.Id);
@@ -769,6 +789,21 @@ public partial class WorldRenderer : Node2D
                 }
                 break;
         }
+    }
+
+    private void DrawWetlandStation()
+    {
+        Vector2 p = WorldData.Center(new(171, 129));
+        bool drained = Active("marsh_drained");
+        Rect(p, -165, -131, 330, 12, new Color("6c8176"));
+        Rect(p, -165, -131, 12, 263, new Color("6c8176"));
+        Rect(p, 153, -131, 12, 263, new Color("6c8176"));
+        for (int i = 0; i < 5; i++)
+            Rect(p, -62 - i * 13, -48 + i * 10, 123 + i * 26, 8, drained ? new Color("92a18c") : new Color("527b7b"));
+        Rect(p, -76, -100, 12, 58, new Color("8e9a83"));
+        Rect(p, 64, -100, 12, 58, new Color("8e9a83"));
+        Rect(p, -82, -108, 165, 12, new Color("a5ad8d"));
+        if (drained) DrawLight(p + new Vector2(0, -83), Cyan, 45);
     }
 
     private void DrawLight(Vector2 p, Color color, float radius)

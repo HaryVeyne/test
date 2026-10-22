@@ -12,22 +12,27 @@ public partial class Projectile : Area2D
     public bool Piercing { get; private set; }
     public Vector2 Direction { get; private set; }
     public float Speed { get; private set; }
+    public DamageKind DamageType { get; private set; }
 
     private CombatController _combat = null!;
     private float _radius;
     private float _life;
     private bool _done;
     private Enemy? _source;
+    private bool _chill;
     private readonly HashSet<Enemy> _hit = new();
 
     public void Configure(CombatController combat, Vector2 direction, bool enemy, int damage, float speed, float radius,
-        bool magic, bool piercing, float lifetime, Enemy? source = null)
+        bool magic, bool piercing, float lifetime, Enemy? source = null,
+        DamageKind damageType = DamageKind.Pierce, bool chill = false)
     {
         _combat = combat;
         _source = source;
         Direction = direction.Normalized();
         EnemyProjectile = enemy;
         Damage = damage;
+        DamageType = damageType;
+        _chill = chill;
         Speed = speed;
         _radius = radius;
         Magic = magic;
@@ -38,7 +43,8 @@ public partial class Projectile : Area2D
         Monitoring = true;
         Monitorable = false;
         ZIndex = 30;
-        AddChild(new CollisionShape2D { Shape = new CircleShape2D { Radius = radius } });
+        using var shape = new CircleShape2D { Radius = radius };
+        AddChild(new CollisionShape2D { Shape = shape });
         BodyEntered += HitBody;
     }
 
@@ -51,8 +57,9 @@ public partial class Projectile : Area2D
         if (_life <= 0) { Expire(); return; }
         Vector2 from = GlobalPosition;
         Vector2 to = from + Direction * Speed * dt;
-        var wallQuery = PhysicsRayQueryParameters2D.Create(from, to, 1);
-        var wall = GetWorld2D().DirectSpaceState.IntersectRay(wallQuery);
+        using var world = GetWorld2D();
+        using var wallQuery = PhysicsRayQueryParameters2D.Create(from, to, 1);
+        using var wall = world.DirectSpaceState.IntersectRay(wallQuery);
         if (wall.Count > 0)
         {
             GlobalPosition = (Vector2)wall["position"];
@@ -108,10 +115,11 @@ public partial class Projectile : Area2D
                 if (target.IsAlive && target.GlobalPosition.DistanceTo(GlobalPosition) <= 64 && _combat.HasLineOfSight(GlobalPosition, target.GlobalPosition))
                 {
                     _hit.Add(target);
-                    target.TakeDamage(target == enemy ? Damage : (int)(Damage * 0.7f), (target.GlobalPosition - GlobalPosition).Normalized() * 85);
+                    target.TakeDamage(target == enemy ? Damage : (int)(Damage * 0.7f), (target.GlobalPosition - GlobalPosition).Normalized() * 85,
+                        DamageType, chill: _chill);
                 }
         }
-        else enemy.TakeDamage(Damage, Direction * 80);
+        else enemy.TakeDamage(Damage, Direction * 80, DamageType, chill: _chill);
         if (!Piercing) Impact();
         else _combat.SpawnEffect(enemy.GlobalPosition, 14, new Color("dae9ab"), 0.18f);
     }
@@ -133,7 +141,7 @@ public partial class Projectile : Area2D
 
     public override void _Draw()
     {
-        Color color = EnemyProjectile ? new Color("ef9b74") : Magic ? new Color("95e6ca") : new Color("e0dbaf");
+        Color color = EnemyProjectile ? new Color("ef9b74") : DamageType == DamageKind.Fire ? new Color("f0aa71") : Magic ? new Color("95e6ca") : new Color("e0dbaf");
         if (Magic)
         {
             DrawCircle(Vector2.Zero, _radius * 2.4f, new Color(color, 0.16f));

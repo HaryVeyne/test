@@ -8,18 +8,22 @@ public enum ItemKind { Weapon, Armor, Accessory, Consumable }
 public enum WeaponKind { Sword, Bow, Staff }
 
 public sealed record ItemDefinition(string Id, string Name, ItemKind Kind, string Rarity, string Description,
-    int Attack = 0, int Defense = 0, int Health = 0, WeaponKind Weapon = WeaponKind.Sword);
+    int Attack = 0, int Defense = 0, int Health = 0, WeaponKind Weapon = WeaponKind.Sword,
+    DamageKind Damage = DamageKind.Slash);
 
 public static class Items
 {
     public static readonly Dictionary<string, ItemDefinition> All = new()
     {
         ["rust_sword"] = new("rust_sword", "旧铁剑", ItemKind.Weapon, "普通", "快速近战，可连续挥击。", Attack: 3),
-        ["hunter_bow"] = new("hunter_bow", "猎弓", ItemKind.Weapon, "普通", "发射快速箭矢，适合中远距离。", Attack: 5, Weapon: WeaponKind.Bow),
-        ["ember_staff"] = new("ember_staff", "余烬法杖", ItemKind.Weapon, "普通", "魔弹命中后爆炸，伤及附近敌人。", Attack: 7, Weapon: WeaponKind.Staff),
+        ["hunter_bow"] = new("hunter_bow", "猎弓", ItemKind.Weapon, "普通", "发射快速箭矢，适合中远距离。", Attack: 5, Weapon: WeaponKind.Bow, Damage: DamageKind.Pierce),
+        ["ember_staff"] = new("ember_staff", "余烬法杖", ItemKind.Weapon, "普通", "火弹命中后爆炸，伤及附近敌人。", Attack: 7, Weapon: WeaponKind.Staff, Damage: DamageKind.Fire),
         ["iron_sword"] = new("iron_sword", "精铁剑", ItemKind.Weapon, "精良", "提高近战伤害。", Attack: 9),
-        ["guardian_blade"] = new("guardian_blade", "守卫长剑", ItemKind.Weapon, "史诗", "古墓守卫的武器，同时强化生命。", Attack: 15, Health: 20),
-        ["solar_staff"] = new("solar_staff", "日核法杖", ItemKind.Weapon, "史诗", "熔炉核心制成的强力爆炸法杖。", Attack: 20, Weapon: WeaponKind.Staff),
+        ["guardian_blade"] = new("guardian_blade", "守卫长剑", ItemKind.Weapon, "史诗", "第三次连续挥击破甲3秒，期间忽略敌人防御。", Attack: 15, Health: 20),
+        ["solar_staff"] = new("solar_staff", "日核法杖", ItemKind.Weapon, "史诗", "熔炉核心制成的强力火焰法杖。", Attack: 20, Weapon: WeaponKind.Staff, Damage: DamageKind.Fire),
+        ["reed_bow"] = new("reed_bow", "芦苇长弓", ItemKind.Weapon, "稀有", "右键蓄力，松开发射。蓄满0.7秒可穿透敌群，造成1.8倍伤害。", Attack: 9, Weapon: WeaponKind.Bow, Damage: DamageKind.Pierce),
+        ["sluice_staff"] = new("sluice_staff", "水闸法杖", ItemKind.Weapon, "稀有", "奥术弹命中后爆炸，对重甲更有效。", Attack: 13, Weapon: WeaponKind.Staff, Damage: DamageKind.Arcane),
+        ["marsh_charm"] = new("marsh_charm", "薄霜护符", ItemKind.Accessory, "稀有", "闪避后2秒内的首次普通攻击附带2秒减速。", Health: 15),
         ["linen_armor"] = new("linen_armor", "亚麻护衣", ItemKind.Armor, "普通", "轻便护衣，提供基础防护。", Defense: 2),
         ["scale_armor"] = new("scale_armor", "鳞片甲", ItemKind.Armor, "精良", "适合地下城战斗的护甲。", Defense: 6, Health: 10),
         ["frost_armor"] = new("frost_armor", "霜纹甲", ItemKind.Armor, "稀有", "雪山遗迹的重甲，增加生命和防御。", Defense: 9, Health: 30),
@@ -61,7 +65,10 @@ public static class Items
         }
         switch (item.Kind)
         {
-            case ItemKind.Weapon: state.WeaponId = id; break;
+            case ItemKind.Weapon:
+                if (state.WeaponId != id) state.ReserveWeaponId = state.WeaponId;
+                state.WeaponId = id;
+                break;
             case ItemKind.Armor: state.ArmorId = id; break;
             case ItemKind.Accessory: state.AccessoryId = id; break;
         }

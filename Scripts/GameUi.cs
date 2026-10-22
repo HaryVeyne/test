@@ -31,6 +31,8 @@ public partial class GameUi : CanvasLayer
     private HBoxContainer _travelButtons = null!;
     private CheckBox _hints = null!;
     private HSlider _volume = null!;
+    private OptionButton _difficulty = null!, _newDifficulty = null!;
+    private Label _difficultyInfo = null!, _weaponHud = null!, _targetInfo = null!;
     private MapView _mapView = null!;
     private string _active = "main", _settingsFrom = "main", _selectedItem = "", _inventorySignature = "", _skillSignature = "";
     private double _toastTime;
@@ -148,6 +150,8 @@ public partial class GameUi : CanvasLayer
         _experienceText = Text("经验 0 / 80", 13, Muted); area.AddChild(_experienceText);
         _experienceBar = Bar(Gold, 5); area.AddChild(_experienceBar);
         _region = Text("草原", 15, Paper); area.AddChild(_region);
+        _weaponHud = Paragraph("", 13, Cyan); area.AddChild(_weaponHud);
+        _targetInfo = Paragraph("", 13, Muted); area.AddChild(_targetInfo);
 
         var navigation = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         navigation.AddThemeStyleboxOverride("panel", Box(new Color("101b22", .86f), new Color("536052", .7f), 8, 15, 10));
@@ -157,6 +161,7 @@ public partial class GameUi : CanvasLayer
         var right = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         right.AddThemeConstantOverride("separation", 4); navigation.AddChild(right);
         right.AddChild(Text("I 背包    C 角色    M 地图", 15));
+        right.AddChild(Text("Tab 切武器    Q 喝药", 14, Cyan));
         right.AddChild(Text("J 日志    Esc 暂停", 14, Muted));
         _progress = Text("遗迹封印 0 / 3", 14, Gold); right.AddChild(_progress);
 
@@ -218,12 +223,17 @@ public partial class GameUi : CanvasLayer
         var titles = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, Alignment = BoxContainer.AlignmentMode.Center }; columns.AddChild(titles);
         titles.AddChild(Text("PROJECT", 60)); titles.AddChild(Text("UNKNOWN", 60)); titles.AddChild(Text("未知之境", 34, Gold));
         var choices = new VBoxContainer { CustomMinimumSize = new Vector2(328, 0), Alignment = BoxContainer.AlignmentMode.Center }; columns.AddChild(choices);
+        _newDifficulty = new OptionButton { CustomMinimumSize = new Vector2(0, 40) };
+        foreach (var profile in CombatRules.Difficulties) _newDifficulty.AddItem("新游戏难度：" + profile.Name);
+        _newDifficulty.Select((int)_game.DefaultDifficulty);
+        _newDifficulty.ItemSelected += index => _game.SetDifficulty((DifficultyLevel)index);
+        choices.AddChild(_newDifficulty);
         choices.AddChild(Button("新游戏", () => _game.StartNew()));
         _continue = Button("继续游戏", () => _game.ContinueGame()); choices.AddChild(_continue);
         choices.AddChild(Button("设置", () => ShowSettings("main"))); choices.AddChild(Button("退出游戏", () => _game.QuitGame()));
         choices.AddChild(Paragraph("WASD 移动 · 鼠标左键攻击\nSpace 闪避 · E 互动", 14));
         var footer = new HBoxContainer(); rows.AddChild(footer);
-        var version = Text("V0.2  ·  单人动作探索 RPG", 13, Muted); version.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; footer.AddChild(version);
+        var version = Text("V0.3  ·  单人动作探索 RPG", 13, Muted); version.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; footer.AddChild(version);
         footer.AddChild(Text("F11  全屏 / 窗口", 13, Muted));
     }
     private void BuildPause()
@@ -235,7 +245,15 @@ public partial class GameUi : CanvasLayer
     }
     private void BuildSettings()
     {
-        _settings = Page(new Vector2(540, 0), out var body); Header(body, "设置", "");
+        _settings = Page(new Vector2(640, 0), out var body); Header(body, "设置", "");
+        var difficultyRow = new HBoxContainer(); body.AddChild(difficultyRow);
+        var difficultyTitle = Text("游戏难度"); difficultyTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; difficultyRow.AddChild(difficultyTitle);
+        _difficulty = new OptionButton { CustomMinimumSize = new Vector2(220, 40) };
+        foreach (var profile in CombatRules.Difficulties) _difficulty.AddItem(profile.Name);
+        _difficulty.ItemSelected += index => { _game.SetDifficulty((DifficultyLevel)index); RefreshDifficulty(); };
+        difficultyRow.AddChild(_difficulty);
+        _difficultyInfo = Paragraph("", 14, Cyan); body.AddChild(_difficultyInfo);
+        body.AddChild(Paragraph("非战斗时可调整。继续游戏使用存档中的难度。", 14));
         body.AddChild(Text("音量"));
         _volume = new HSlider { MinValue = 0, MaxValue = 1, Step = .01, Value = _game.Volume, CustomMinimumSize = new Vector2(0, 28) };
         _volume.ValueChanged += value => _game.SetVolume((float)value); body.AddChild(_volume);
@@ -400,7 +418,7 @@ public partial class GameUi : CanvasLayer
     {
         var state = _game.State;
         _inventorySignature = InventorySignature();
-        _equipmentText.Text = $"武器：{ItemName(state.WeaponId)}    防具：{ItemName(state.ArmorId)}    饰品：{ItemName(state.AccessoryId)}";
+        _equipmentText.Text = $"武器：{ItemName(state.WeaponId)}    备用：{ItemName(state.ReserveWeaponId)}（Tab）\n防具：{ItemName(state.ArmorId)}    饰品：{ItemName(state.AccessoryId)}";
         Clear(_inventoryEntries);
         if (!state.Inventory.Any(item => item.Id == _selectedItem)) _selectedItem = state.Inventory.FirstOrDefault()?.Id ?? "";
         foreach (var item in state.Inventory)
@@ -425,6 +443,7 @@ public partial class GameUi : CanvasLayer
         if (item.Attack != 0) attributes += $"\n攻击 +{item.Attack}";
         if (item.Defense != 0) attributes += $"\n防御 +{item.Defense}";
         if (item.Health != 0) attributes += $"\n最大生命 +{item.Health}";
+        if (item.Kind == ItemKind.Weapon) attributes += $"\n伤害类型：{CombatRules.DamageName(item.Damage)}\n{CombatRules.WeaponHint(item.Damage)}";
         _itemDetail.Text = $"{item.Rarity} · {kind}{attributes}\n\n{item.Description}\n\n当前角色\n攻击 {stats.Attack} · 防御 {stats.Defense}\n最大生命 {stats.MaxHealth:0}";
         _equip.Visible = item.Kind != ItemKind.Consumable; _equip.Disabled = IsEquipped(item.Id); _equip.Text = IsEquipped(item.Id) ? "已装备" : "装备";
         _use.Visible = item.Kind == ItemKind.Consumable; _use.Disabled = item.Id == "health_potion" && _game.State.Health >= stats.MaxHealth;
@@ -438,11 +457,11 @@ public partial class GameUi : CanvasLayer
     {
         var state = _game.State; var stats = _game.Stats;
         _skillSignature = SkillSignature();
-        _characterStats.Text = $"等级 {state.Level}    经验 {state.Experience} / {Progression.RequiredXp(state.Level)}\n生命 {state.Health:0} / {stats.MaxHealth:0}    攻击 {stats.Attack}    防御 {stats.Defense}    移动速度 {stats.MoveSpeed:0}";
+        _characterStats.Text = $"等级 {state.Level}    经验 {state.Experience} / {Progression.RequiredXp(state.Level)}    难度：{CombatRules.Profile(state.Difficulty).Name}\n生命 {state.Health:0} / {stats.MaxHealth:0}    攻击 {stats.Attack}    防御 {stats.Defense}\n斩击克野兽 · 穿刺克轻甲 · 奥术克重甲 · 火焰克植物";
         _skillPoints.Text = $"可用技能点：{state.SkillPoints}"; Clear(_skillEntries);
-        AddSkillRow("cleave", "1 · 回旋斩", $"近身范围攻击，造成 2 倍攻击伤害并击退。冷却 {6 * stats.CooldownScale:0.#} 秒。", false);
+        AddSkillRow("cleave", "1 · 回旋斩", $"近身范围斩击，造成 2 倍攻击伤害并击退。冷却 {6 * stats.CooldownScale:0.#} 秒。", false);
         AddSkillRow("volley", "2 · 三连射", $"向瞄准方向发射三支穿透箭。冷却 {8 * stats.CooldownScale:0.#} 秒。", false);
-        AddSkillRow("nova", "3 · 寒霜爆发", $"鼠标位置范围攻击，减速 3 秒。施法范围 250，冷却 {10 * stats.CooldownScale:0.#} 秒。", false);
+        AddSkillRow("nova", "3 · 寒霜爆发", $"鼠标位置范围寒霜伤害，减速 3 秒。施法范围 250，冷却 {10 * stats.CooldownScale:0.#} 秒。", false);
         AddSkillRow("vitality", "体魄", "每级最大生命 +20，最多 3 级。", true);
         AddSkillRow("power", "强攻", "每级攻击 +3，最多 3 级。", true);
         AddSkillRow("guard", "坚甲", "每级防御 +2，最多 3 级。", true);
@@ -460,7 +479,15 @@ public partial class GameUi : CanvasLayer
     private string SkillSignature() => $"{_game.State.Level}/{_game.State.Experience}/{_game.State.SkillPoints}/{_game.State.Health:0}/{_game.State.WeaponId}/{_game.State.ArmorId}/{_game.State.AccessoryId}/" + string.Join(",", _game.State.LearnedSkills.OrderBy(id => id)) + "/" + string.Join(",", _game.State.Passives.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
     private void ShowSettings(string from)
     {
-        _settingsFrom = from; _volume.SetValueNoSignal(_game.Volume); _hints.SetPressedNoSignal(_game.HintsEnabled); Activate("settings");
+        _settingsFrom = from; _volume.SetValueNoSignal(_game.Volume); _hints.SetPressedNoSignal(_game.HintsEnabled); RefreshDifficulty(); Activate("settings");
+    }
+    private void RefreshDifficulty()
+    {
+        var level = _game.HasSession ? _game.State.Difficulty : _game.DefaultDifficulty;
+        _difficulty.Select((int)level);
+        _difficulty.Disabled = _game.HasSession && _game.Combat.HasThreatNearby;
+        _difficultyInfo.Text = CombatRules.Profile(level).Description;
+        _newDifficulty.Select((int)_game.DefaultDifficulty);
     }
     public void CloseOverlay()
     {
@@ -479,6 +506,7 @@ public partial class GameUi : CanvasLayer
         _endingTitle.Text = state.RpgCompleted ? "主线完成" : "中央遗迹已开启";
         _endingReward.Text = state.RpgCompleted ? "中央遗迹、林地墓室与熔炉已完成。首领奖励：守卫长剑、日核法杖。可继续探索。" : "遗迹奖励：潮汐护符、160 经验、2 技能点。继续探索地下城，击败两名首领。";
         StatRow("游玩时间", FormatTime(state.PlayedSeconds), "角色等级", state.Level.ToString());
+        StatRow("当前难度", CombatRules.Profile(state.Difficulty).Name, "湿地事件", Wetland.Status(state));
         StatRow("击败敌人", state.EnemyKills.ToString(), "死亡次数", state.Deaths.ToString());
         StatRow("首领", $"{state.BossesDefeated.Count} / 2", "打开宝箱", state.OpenedChests.Count.ToString());
         StatRow("地表探索", $"{100.0 * state.Explored.Count / (WorldData.Size * WorldData.Size):0.0}%", "行走距离", $"{state.Distance / WorldData.TileSize:0} 格");
@@ -513,10 +541,20 @@ public partial class GameUi : CanvasLayer
     private void RefreshHud()
     {
         var state = _game.State; var stats = _game.Stats;
-        _region.Text = _game.CurrentRegion; _levelText.Text = $"Lv. {state.Level}"; _healthText.Text = $"{Math.Max(0, state.Health):0} / {stats.MaxHealth:0}";
+        _region.Text = _game.CurrentRegion + " · " + CombatRules.Profile(state.Difficulty).Name; _levelText.Text = $"Lv. {state.Level}"; _healthText.Text = $"{Math.Max(0, state.Health):0} / {stats.MaxHealth:0}";
+        string weapon = state.WeaponId.Length > 0 ? ItemName(state.WeaponId) : "徒手";
+        DamageKind type = state.WeaponId.Length > 0 ? Items.Get(state.WeaponId).Damage : DamageKind.Slash;
+        _weaponHud.Text = weapon + " · " + CombatRules.DamageName(type)
+            + (state.WeaponId == "reed_bow" ? $"\n右键蓄力 {_game.Combat.ChargeProgress:P0}" : "")
+            + (_game.Combat.DodgeEmpowerTime > 0 ? $"\n寒霜附击 {_game.Combat.DodgeEmpowerTime:0.0}s" : "");
+        Vector2 mouse = _game.Wanderer.GetGlobalMousePosition();
+        var target = _game.Combat.Enemies.Where(e => e.IsAlive && e.IsAccessible && e.Position.DistanceSquaredTo(_game.Wanderer.Position) < 420 * 420
+            && e.Position.DistanceSquaredTo(mouse) < 70 * 70).OrderBy(e => e.Position.DistanceSquaredTo(mouse)).FirstOrDefault();
+        _targetInfo.Text = target == null ? "指向敌人查看弱点" : $"{CombatRules.EnemyName(target.Kind)} · {CombatRules.Affinity(target.Kind)}\n{CombatRules.AffinityHint(target.Kind)}\n当前武器 ×{CombatRules.Multiplier(target.Kind, type):0.##}";
         _healthBar.MaxValue = stats.MaxHealth; _healthBar.Value = state.Health;
         int xp = Progression.RequiredXp(state.Level); _experienceBar.MaxValue = xp; _experienceBar.Value = state.Experience; _experienceText.Text = $"经验 {state.Experience} / {xp}";
         int signals = new[] { "forest", "dunes", "lake" }.Count(id => state.Activated.Contains(id)); _progress.Text = $"遗迹封印 {signals} / 3  ·  首领 {state.BossesDefeated.Count} / 2";
+        if (state.Discovered.Contains("marsh_pump") || state.Activated.Contains("marsh_west") || state.Activated.Contains("marsh_east")) _progress.Text += "\n" + Wetland.Status(state);
         _promptPanel.Visible = _game.InteractionPrompt.Length > 0; _prompt.Text = _game.InteractionPrompt;
         for (int i = 0; i < 3; i++)
         {
@@ -541,7 +579,8 @@ public partial class GameUi : CanvasLayer
     }
     public void Toast(string message, bool success = false)
     {
-        _toastText.Text = message; PositionToast(); _toastPanel.AddThemeStyleboxOverride("panel", Box(new Color("101b22", .98f), success ? Cyan : Gold, 8, 20, _active.Length == 0 ? 12 : 6));
+        using var style = Box(new Color("101b22", .98f), success ? Cyan : Gold, 8, 20, _active.Length == 0 ? 12 : 6);
+        _toastText.Text = message; PositionToast(); _toastPanel.AddThemeStyleboxOverride("panel", style);
         _toastTime = Math.Clamp(2.2 + message.Length * .045, 2.2, 8); _toastPanel.Modulate = Colors.White; _toastPanel.Visible = true;
         if (_active == "journal") RefreshJournal();
     }

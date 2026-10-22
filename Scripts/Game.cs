@@ -15,6 +15,7 @@ public partial class Game : Node2D
     public string InteractionPrompt { get; private set; } = "";
     public bool HintsEnabled { get; private set; } = true;
     public float Volume { get; private set; } = 0.65f;
+    public DifficultyLevel DefaultDifficulty { get; private set; } = DifficultyLevel.Standard;
     public Player Wanderer => _player;
     public PuzzleController Puzzles => _puzzles;
     public PlayerStats Stats => Progression.Stats(State);
@@ -123,6 +124,8 @@ public partial class Game : Node2D
         else if (input.IsActionPressed("inventory")) _ui.ToggleInventory();
         else if (input.IsActionPressed("character")) _ui.ToggleCharacter();
         else if (IsPlaying && input.IsActionPressed("interact")) InteractNearby();
+        else if (IsPlaying && input.IsActionPressed("quick_swap")) QuickSwapWeapon();
+        else if (IsPlaying && input.IsActionPressed("quick_heal")) UseItem("health_potion");
     }
 
     public override void _Notification(int what)
@@ -134,16 +137,16 @@ public partial class Game : Node2D
     public void StartNew()
     {
         if (!SaveStore.ArchiveForNewGame(out string error)) { Notify(error); return; }
-        BuildWorld(new GameState());
+        BuildWorld(new GameState { Difficulty = DefaultDifficulty });
         State.Health = Stats.MaxHealth;
         HasSession = true;
         Resume();
-        Record("session_start", $"seed={State.Seed}");
+        Record("session_start", $"seed={State.Seed};difficulty={State.Difficulty}");
         Note("目标：完成中央遗迹，击败林地墓室和熔炉的守卫。营地可恢复生命并作为复活点。");
         Note("左键攻击，Space 闪避，1 / 2 / 3 使用已学习的技能。I 打开背包，C 学习技能和强化。林地墓室入口位于中央遗迹西北方。");
         Explore();
         _ui.ShowHud();
-        Notify("I 切换装备，C 学习技能。营地可恢复生命。");
+        Notify("Tab 切换武器，Q 喝药。I 装备，C 学习技能。湿地泵站有新的探索线索。");
         SaveGame(false);
     }
 
@@ -166,6 +169,7 @@ public partial class Game : Node2D
     {
         IsPlaying = false;
         _player.Active = false;
+        Combat.CancelAttack();
         if (HasSession) SaveGame(false);
     }
 
@@ -238,7 +242,32 @@ public partial class Game : Node2D
     public void SetHints(bool enabled) { HintsEnabled = enabled; SaveSettings(); }
     public void Notify(string text, bool success = false) { _ui?.Toast(text, success); }
     public void Record(string action, string detail) => State.Events.Add(new(State.PlayedSeconds, action, detail));
-    private void Note(string text) { if (!State.Journal.Any(n => n.Text == text)) State.Journal.Add(new(State.PlayedSeconds, text)); }
+    public void Note(string text) { if (!State.Journal.Any(n => n.Text == text)) State.Journal.Add(new(State.PlayedSeconds, text)); }
+
+    public bool SetDifficulty(DifficultyLevel difficulty)
+    {
+        if (HasSession && Combat.HasThreatNearby) { Notify("战斗中无法切换难度。"); return false; }
+        DefaultDifficulty = difficulty;
+        if (HasSession)
+        {
+            State.Difficulty = difficulty;
+            foreach (var enemy in Combat.Enemies) enemy.ApplyDifficulty();
+            Record("difficulty_changed", difficulty.ToString());
+            SaveGame(false);
+        }
+        SaveSettings();
+        Notify("难度：" + CombatRules.Profile(difficulty).Name, true);
+        return true;
+    }
+
+    public void QuickSwapWeapon()
+    {
+        string reserve = State.ReserveWeaponId;
+        if (reserve.Length == 0 || !State.Inventory.Any(item => item.Id == reserve))
+            reserve = State.Inventory.FirstOrDefault(item => Items.Get(item.Id).Kind == ItemKind.Weapon && item.Id != State.WeaponId)?.Id ?? "";
+        if (reserve.Length == 0) { Notify("没有可切换的武器。"); return; }
+        EquipItem(reserve);
+    }
 
     public void EquipItem(string id)
     {
@@ -268,6 +297,7 @@ public partial class Game : Node2D
     {
         if (id == State.WeaponId || id == State.ArmorId || id == State.AccessoryId) { Notify("请先卸下这件装备。"); return; }
         if (!Items.Remove(State, id)) return;
+        if (State.ReserveWeaponId == id && !State.Inventory.Any(item => item.Id == id)) State.ReserveWeaponId = "";
         Combat.DropItem(id, 1, _player.Position + Vector2.Down * 20);
         Record("discard", id);
         Notify("已丢弃 " + Items.Get(id).Name);
@@ -310,6 +340,7 @@ public partial class Game : Node2D
                 case "portal": EnterDungeon(obj.Value); return;
                 case "exit": ExitDungeon(); return;
                 default:
+                    if (Wetland.Interact(this, obj, out var wetlandFeedback)) { ShowFeedback(wetlandFeedback); SaveGame(false); return; }
                     if (Dungeons != null && Dungeons.Interact(obj, out var feedback)) { ShowFeedback(feedback); return; }
                     break;
             }
@@ -424,7 +455,15 @@ public partial class Game : Node2D
         int gained = Progression.GrantExperience(State, enemy.ExperienceReward);
         Record("enemy_defeated", $"{State.Area}:{enemy.SpawnId}:{enemy.Kind};xp={enemy.ExperienceReward}");
         if (gained > 0) Notify($"升至 {State.Level} 级，技能点 +{gained}。", true);
-        if (enemy.IsBoss)
+        if (enemy.SpawnId == "marsh_keeper")
+        {
+            State.Activated.Add("marsh_complete");
+            Combat.DropItem("sluice_staff", 1, enemy.Position);
+            Note("库房守卫已击败，掉落水闸法杖：奥术伤害对重甲更有效。库房宝箱中还有薄霜护符。");
+            Notify("库房守卫已击败，掉落：水闸法杖。", true);
+            SaveGame(false);
+        }
+        else if (enemy.IsBoss)
         {
             State.BossesDefeated.Add(enemy.Kind);
             State.BossKills++;
@@ -513,6 +552,7 @@ public partial class Game : Node2D
         _dungeonArt = null;
         State.Area = area;
         World = new WorldData(State.Seed, area);
+        Wetland.Apply(World, State);
         _bridgeWasOpen = State.Activated.Contains("bridge");
         if (area == "world" && _bridgeWasOpen) World.OpenBridge();
         if (area != "world" && State.Activated.Contains(area + "_gate")) World.OpenGate(area + "_gate");
@@ -578,11 +618,14 @@ public partial class Game : Node2D
         Bind("move_left", Key.A, Key.Left); Bind("move_right", Key.D, Key.Right);
         Bind("move_up", Key.W, Key.Up); Bind("move_down", Key.S, Key.Down);
         Bind("run", Key.Shift); Bind("dodge", Key.Space);
+        Bind("quick_swap", Key.Tab); Bind("quick_heal", Key.Q);
         Bind("interact", Key.E); Bind("inventory", Key.I); Bind("character", Key.C);
         Bind("map", Key.M); Bind("journal", Key.J); Bind("pause", Key.Escape); Bind("fullscreen", Key.F11);
         Bind("skill_1", Key.Key1); Bind("skill_2", Key.Key2); Bind("skill_3", Key.Key3);
         if (!InputMap.HasAction("attack")) InputMap.AddAction("attack");
         InputMap.ActionAddEvent("attack", new InputEventMouseButton { ButtonIndex = MouseButton.Left });
+        if (!InputMap.HasAction("charge_attack")) InputMap.AddAction("charge_attack");
+        InputMap.ActionAddEvent("charge_attack", new InputEventMouseButton { ButtonIndex = MouseButton.Right });
     }
 
     private static void Bind(string action, params Key[] keys)
@@ -598,7 +641,11 @@ public partial class Game : Node2D
         try
         {
             var settings = JsonSerializer.Deserialize<Settings>(FileAccess.GetFileAsString("user://settings.json"));
-            if (settings != null) { Volume = Mathf.Clamp(settings.Volume, 0, 1); HintsEnabled = settings.HintsEnabled; }
+            if (settings != null)
+            {
+                Volume = Mathf.Clamp(settings.Volume, 0, 1); HintsEnabled = settings.HintsEnabled;
+                if (Enum.IsDefined(settings.Difficulty)) DefaultDifficulty = settings.Difficulty;
+            }
         }
         catch (JsonException) { GD.Print("Invalid settings JSON; defaults loaded."); }
     }
@@ -606,12 +653,13 @@ public partial class Game : Node2D
     private void SaveSettings()
     {
         using var file = FileAccess.Open("user://settings.json", FileAccess.ModeFlags.Write);
-        if (file != null) file.StoreString(JsonSerializer.Serialize(new Settings { Volume = Volume, HintsEnabled = HintsEnabled }));
+        if (file != null) file.StoreString(JsonSerializer.Serialize(new Settings { Volume = Volume, HintsEnabled = HintsEnabled, Difficulty = DefaultDifficulty }));
     }
 
     private sealed class Settings
     {
         public float Volume { get; set; } = 0.65f;
         public bool HintsEnabled { get; set; } = true;
+        public DifficultyLevel Difficulty { get; set; } = DifficultyLevel.Standard;
     }
 }

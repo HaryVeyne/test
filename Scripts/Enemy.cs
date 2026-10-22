@@ -9,13 +9,25 @@ public partial class Enemy : CharacterBody2D
     public string SpawnId = "";
     public string Kind = "scavenger";
     public int Level = 1;
-    public int Health;
+    public int Health
+    {
+        get => _health;
+        set { _health = value; _healthFraction = MaxHealth > 0 ? (float)value / MaxHealth : 1; }
+    }
+    private int _health;
+    private float _healthFraction = 1;
     public int MaxHealth;
     public int ExperienceReward;
     public float SlowTime;
+    public float ArmorBreakTime;
+    public int Defense => ArmorBreakTime > 0 ? 0 : _defense;
+    public int AttackDamage => _damage;
+    public float MoveSpeed => _speed;
     public bool IsBoss => Kind is "root_boss" or "forge_boss";
     public bool IsAlive => Health > 0;
     public bool PhaseTwo => IsBoss && Health <= MaxHealth / 2;
+    public bool IsAccessible => (!IsBoss || _combat.Game.Dungeons?.BossAccessible != false)
+        && (SpawnId != "marsh_keeper" || _combat.Game.State.Activated.Contains("marsh_drained"));
     public string AiState => _mode.ToString();
 
     private enum Mode { Idle, Patrol, Alert, Chase, Windup, Attack, Recover, Return, Dead }
@@ -43,6 +55,8 @@ public partial class Enemy : CharacterBody2D
     private int _damage;
     private float _speed;
     private float _attackRange;
+    private int _baseHealth, _baseDamage, _baseDefense, _defense;
+    private float _baseSpeed;
 
     public void Configure(CombatController combat, EnemySpawn spawn)
     {
@@ -66,12 +80,23 @@ public partial class Enemy : CharacterBody2D
             "forge_boss" => (650, 32, 54f, 390f, 340),
             _ => (40, 11, 89f, 40f, 19)
         };
-        MaxHealth = IsBoss ? hp : hp + (Level - 1) * 12;
-        Health = MaxHealth;
-        _damage = damage + (Level - 1) * (IsBoss ? 1 : 2);
-        _speed = speed;
+        _baseHealth = IsBoss ? hp : hp + (Level - 1) * 12;
+        _baseDamage = damage + (Level - 1) * (IsBoss ? 1 : 2);
+        _baseDefense = Kind == "guardian" ? 4 + Level : Kind == "elite" ? 3 : 0;
+        _baseSpeed = speed;
+        ApplyDifficulty();
         _attackRange = range;
         ExperienceReward = xp + (Level - 1) * 6;
+    }
+
+    public void ApplyDifficulty()
+    {
+        var profile = CombatRules.Profile(_combat.Game.State.Difficulty);
+        MaxHealth = Mathf.CeilToInt(_baseHealth * profile.Health);
+        _health = _healthFraction > 0 ? Math.Max(1, Mathf.RoundToInt(MaxHealth * _healthFraction)) : 0;
+        _damage = Mathf.CeilToInt(_baseDamage * profile.Attack);
+        _defense = Math.Max(0, _baseDefense + profile.Defense);
+        _speed = _baseSpeed * profile.Speed;
     }
 
     public override void _Ready()
@@ -79,9 +104,10 @@ public partial class Enemy : CharacterBody2D
         CollisionLayer = 4;
         CollisionMask = 5;
         ZIndex = 19;
+        using var shape = new CircleShape2D { Radius = IsBoss ? 19 : Kind == "guardian" ? 11 : 8 };
         AddChild(new CollisionShape2D
         {
-            Shape = new CircleShape2D { Radius = IsBoss ? 19 : Kind == "guardian" ? 11 : 8 },
+            Shape = shape,
             Position = new Vector2(0, 3)
         });
     }
@@ -99,7 +125,7 @@ public partial class Enemy : CharacterBody2D
             QueueRedraw();
             return;
         }
-        if (IsBoss && _combat.Game.Dungeons?.BossAccessible == false)
+        if (!IsAccessible)
         {
             Velocity = Vector2.Zero;
             _mode = Mode.Idle;
@@ -112,6 +138,7 @@ public partial class Enemy : CharacterBody2D
         _timer -= dt;
         _flash = Mathf.Max(0, _flash - dt);
         SlowTime = Mathf.Max(0, SlowTime - dt);
+        ArmorBreakTime = Mathf.Max(0, ArmorBreakTime - dt);
         _navigationTimer -= dt;
         _knockback = _knockback.MoveToward(Vector2.Zero, dt * 780);
         Velocity = _knockback;
@@ -163,7 +190,7 @@ public partial class Enemy : CharacterBody2D
                 if (_timer <= 0) ResolveAttack();
                 break;
             case Mode.Attack:
-                Velocity += _attackDirection * (Kind == "wolf" ? 360 : 330) * (SlowTime > 0 ? 0.65f : 1);
+                Velocity += _attackDirection * (Kind == "wolf" ? 360 : 330) * CombatRules.Profile(_combat.Game.State.Difficulty).Speed * (SlowTime > 0 ? 0.65f : 1);
                 if (!_dashHit && distance < (IsBoss ? 35 : 25))
                     _dashHit = _combat.DamagePlayer(_damage, Position);
                 if (_timer <= 0 || IsOnWall()) Rest(Mode.Recover, 0.75f);
@@ -346,18 +373,23 @@ public partial class Enemy : CharacterBody2D
                 _damage, speed, magic ? 7 : 4, magic, false, 3, source: this);
     }
 
-    public void TakeDamage(int damage, Vector2 knockback)
+    public void TakeDamage(int damage, Vector2 knockback, DamageKind type = DamageKind.Environment,
+        bool breakArmor = false, bool chill = false)
     {
-        if (!_combat.Game.IsPlaying || !IsAlive || IsBoss && _combat.Game.Dungeons?.BossAccessible == false) return;
+        if (!_combat.Game.IsPlaying || !IsAlive || !IsAccessible) return;
         if (_mode is Mode.Idle or Mode.Patrol or Mode.Return) Alert(_combat.Game.Wanderer.Position);
-        int resistance = Kind == "guardian" ? 4 + Level : Kind == "elite" ? 3 : 0;
-        int actual = Math.Min(Health, Math.Max(1, damage - resistance));
+        if (breakArmor) ArmorBreakTime = 3;
+        if (chill) SlowTime = Mathf.Max(SlowTime, 2);
+        float multiplier = CombatRules.Multiplier(Kind, type);
+        int actual = Math.Min(Health, Math.Max(1, Mathf.RoundToInt(damage * multiplier) - Defense));
         Health = Math.Max(0, Health - actual);
         _combat.Game.OnEnemyHit(actual);
         _flash = 0.16f;
         _knockback += knockback * (IsBoss ? 0.1f : Kind == "guardian" ? 0.35f : 1);
         _combat.Game.State.DamageDealt += actual;
-        _combat.DamageNumber(Position + new Vector2(0, -30), actual, new Color("ead89d"));
+        string effect = breakArmor ? "破甲" : multiplier > 1 ? "弱点" : multiplier < 1 ? "抵抗" : chill ? "减速" : "";
+        _combat.DamageNumber(Position + new Vector2(0, -30), actual,
+            multiplier < 1 ? new Color("9dafb9") : new Color("ead89d"), effect);
         _combat.SpawnEffect(Position + new Vector2(0, -7), IsBoss ? 25 : 14, new Color("eed5a0"), 0.12f);
         if (Health == 0)
         {
@@ -384,10 +416,12 @@ public partial class Enemy : CharacterBody2D
             "forge_boss" => new Color("9ba6a8"),
             _ => new Color("ad8674")
         };
+        if (SpawnId == "marsh_keeper") body = new Color("68a5a0");
         if (_flash > 0) body = body.Lerp(new Color("fff0cd"), 0.85f);
         float shadow = IsBoss ? 31 : Kind == "guardian" ? 16 : 12;
         DrawEllipse(new Vector2(0, 9), new Vector2(shadow, shadow * 0.35f), new Color(0.02f, 0.04f, 0.05f, 0.4f));
         if (SlowTime > 0) DrawArc(Vector2.Zero, shadow + 3, 0, Mathf.Tau, 24, new Color("87c7d6"), 2);
+        if (ArmorBreakTime > 0) DrawArc(Vector2.Zero, shadow + 6, 0, Mathf.Tau, 16, new Color("e8ad71"), 2);
         switch (Kind)
         {
             case "wolf":

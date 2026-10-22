@@ -71,6 +71,8 @@ public sealed class WorldData
         PlaceLandmarks();
         BuildLake();
         PlaceAdventureContent();
+        Wetland.Build(this);
+        EnsureContentReachable();
     }
 
     public static Vector2 Center(Vector2I tile) => (Vector2)tile * TileSize + Vector2.One * (TileSize / 2);
@@ -193,7 +195,7 @@ public sealed class WorldData
         Path(new(173, 157), new(147, 159), new(132, 178));
     }
 
-    private void Path(params Vector2I[] points)
+    internal void Path(params Vector2I[] points)
     {
         for (int p = 1; p < points.Length; p++)
         {
@@ -239,7 +241,7 @@ public sealed class WorldData
             Blocked[pillar.X, pillar.Y] = true;
     }
 
-    private void ClearDisc(Vector2I center, int radius, Terrain terrain)
+    internal void ClearDisc(Vector2I center, int radius, Terrain terrain)
     {
         for (int x = center.X - radius; x <= center.X + radius; x++)
         for (int y = center.Y - radius; y <= center.Y + radius; y++)
@@ -363,7 +365,7 @@ public sealed class WorldData
         EnsureContentReachable();
     }
 
-    private void ConnectToRoad(Vector2I tile)
+    internal void ConnectToRoad(Vector2I tile)
     {
         Vector2I nearest = tile;
         float best = float.PositiveInfinity;
@@ -401,8 +403,8 @@ public sealed class WorldData
         }
         Flood();
         var targets = new List<Vector2I>();
-        foreach (WorldObject obj in Objects) targets.Add(obj.Tile);
-        foreach (EnemySpawn spawn in EnemySpawns) targets.Add(spawn.Tile);
+        foreach (WorldObject obj in Objects) if (obj.Id != "marsh_vault") targets.Add(obj.Tile);
+        foreach (EnemySpawn spawn in EnemySpawns) if (spawn.Id != "marsh_keeper") targets.Add(spawn.Tile);
         foreach (Vector2I tile in targets)
         {
             if (visited[tile.X, tile.Y]) continue;
