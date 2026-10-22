@@ -43,7 +43,8 @@ public partial class Projectile : Area2D
         Monitoring = true;
         Monitorable = false;
         ZIndex = 30;
-        AddChild(new CollisionShape2D { Shape = new CircleShape2D { Radius = radius } });
+        using var shape = new CircleShape2D { Radius = radius };
+        AddChild(new CollisionShape2D { Shape = shape });
         BodyEntered += HitBody;
     }
 
@@ -56,8 +57,9 @@ public partial class Projectile : Area2D
         if (_life <= 0) { Expire(); return; }
         Vector2 from = GlobalPosition;
         Vector2 to = from + Direction * Speed * dt;
-        var wallQuery = PhysicsRayQueryParameters2D.Create(from, to, 1);
-        var wall = GetWorld2D().DirectSpaceState.IntersectRay(wallQuery);
+        using var world = GetWorld2D();
+        using var wallQuery = PhysicsRayQueryParameters2D.Create(from, to, 1);
+        using var wall = world.DirectSpaceState.IntersectRay(wallQuery);
         if (wall.Count > 0)
         {
             GlobalPosition = (Vector2)wall["position"];

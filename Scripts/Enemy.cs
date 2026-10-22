@@ -104,9 +104,10 @@ public partial class Enemy : CharacterBody2D
         CollisionLayer = 4;
         CollisionMask = 5;
         ZIndex = 19;
+        using var shape = new CircleShape2D { Radius = IsBoss ? 19 : Kind == "guardian" ? 11 : 8 };
         AddChild(new CollisionShape2D
         {
-            Shape = new CircleShape2D { Radius = IsBoss ? 19 : Kind == "guardian" ? 11 : 8 },
+            Shape = shape,
             Position = new Vector2(0, 3)
         });
     }

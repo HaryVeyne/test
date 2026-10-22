@@ -349,8 +349,10 @@ public partial class CombatController : Node2D
 
     public bool HasLineOfSight(Vector2 from, Vector2 to)
     {
-        var query = PhysicsRayQueryParameters2D.Create(from, to, 1);
-        return GetWorld2D().DirectSpaceState.IntersectRay(query).Count == 0;
+        using var world = GetWorld2D();
+        using var query = PhysicsRayQueryParameters2D.Create(from, to, 1);
+        using var hit = world.DirectSpaceState.IntersectRay(query);
+        return hit.Count == 0;
     }
 
     public void TelegraphCircle(Vector2 position, float radius, float duration, Color color, int damage = 0, Enemy? source = null)

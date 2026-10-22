@@ -32,7 +32,8 @@ public partial class Player : CharacterBody2D
     {
         CollisionLayer = 2;
         CollisionMask = 1;
-        AddChild(new CollisionShape2D { Shape = new CircleShape2D { Radius = 7 }, Position = new Vector2(0, 3) });
+        using var shape = new CircleShape2D { Radius = 7 };
+        AddChild(new CollisionShape2D { Shape = shape, Position = new Vector2(0, 3) });
         ZIndex = 20;
     }
 

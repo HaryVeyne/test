@@ -579,7 +579,8 @@ public partial class GameUi : CanvasLayer
     }
     public void Toast(string message, bool success = false)
     {
-        _toastText.Text = message; PositionToast(); _toastPanel.AddThemeStyleboxOverride("panel", Box(new Color("101b22", .98f), success ? Cyan : Gold, 8, 20, _active.Length == 0 ? 12 : 6));
+        using var style = Box(new Color("101b22", .98f), success ? Cyan : Gold, 8, 20, _active.Length == 0 ? 12 : 6);
+        _toastText.Text = message; PositionToast(); _toastPanel.AddThemeStyleboxOverride("panel", style);
         _toastTime = Math.Clamp(2.2 + message.Length * .045, 2.2, 8); _toastPanel.Modulate = Colors.White; _toastPanel.Visible = true;
         if (_active == "journal") RefreshJournal();
     }

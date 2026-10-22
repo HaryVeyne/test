@@ -56,10 +56,11 @@ public partial class WorldRenderer : Node2D
             }
             for (int xx = x; xx < x + width; xx++)
             for (int yy = y; yy < y + height; yy++) covered[xx, yy] = true;
+            using var shape = new RectangleShape2D { Size = new Vector2(width * 32, height * 32) };
             _collisions.AddChild(new CollisionShape2D
             {
                 Position = new Vector2((x + width * 0.5f) * 32, (y + height * 0.5f) * 32),
-                Shape = new RectangleShape2D { Size = new Vector2(width * 32, height * 32) }
+                Shape = shape
             });
         }
     }
